@@ -1,7 +1,7 @@
 """
 Data preparation.
 
-Download: http://www.robots.ox.ac.uk/~vgg/data/voxceleb/
+Download: https://magenta.tensorflow.org/datasets/nsynth
 """
 
 import os
@@ -21,7 +21,7 @@ from speechbrain.dataio.dataio import (
 )
 
 logger = logging.getLogger(__name__)
-OPT_FILE = "opt_voxceleb_prepare.pkl"
+OPT_FILE = "opt_nsynth_prepare.pkl"
 TRAIN_CSV = "train.csv"
 DEV_CSV = "dev.csv"
 TEST_CSV = "test.csv"
@@ -29,12 +29,16 @@ ENROL_CSV = "enrol.csv"
 SAMPLERATE = 16000
 
 
-DEV_WAV = "vox1_dev_wav.zip"
+# DEV_WAV = "vox1_dev_wav.zip"
 TEST_WAV = "vox1_test_wav.zip"
 META = "meta"
 
+ORIGIN_TRAIN = "/mnt/md1/datasets/Nsynth/nsynth-train/audio"
+ORIGIN_VALID = "/mnt/md1/datasets/Nsynth/nsynth-valid/audio"
+ORIGIN_TEST = "/mnt/md1/datasets/Nsynth/nsynth-test/audio"
 
-def prepare_voxceleb(
+
+def prepare_nsynth(
     data_folder,
     save_folder,
     verification_pairs_file,
@@ -43,7 +47,7 @@ def prepare_voxceleb(
     seg_dur=3.0,
     amp_th=5e-04,
     source=None,
-    split_speaker=False,
+    split_instrument=False,
     random_segment=False,
     skip_prep=False,
 ):
@@ -71,8 +75,8 @@ def prepare_voxceleb(
         given threshold.
     source : str
         Path to the folder where the VoxCeleb dataset source is stored.
-    split_speaker : bool
-        Speaker-wise split
+    split_instrument : bool
+        Instrument-wise split
     random_segment : bool
         Train random segments
     skip_prep: Bool
@@ -80,12 +84,12 @@ def prepare_voxceleb(
 
     Example
     -------
-    >>> from recipes.VoxCeleb.voxceleb1_prepare import prepare_voxceleb
-    >>> data_folder = 'data/VoxCeleb1/'
+    >>> from recipes.mu_vector.data_prepare import prepare_nsynth
+    >>> data_folder = 'data/nsynth/'
     >>> save_folder = 'VoxData/'
     >>> splits = ['train', 'dev']
     >>> split_ratio = [90, 10]
-    >>> prepare_voxceleb(data_folder, save_folder, splits, split_ratio)
+    >>> prepare_nsynth(data_folder, save_folder, splits, split_ratio)
     """
 
     if skip_prep:
@@ -97,7 +101,7 @@ def prepare_voxceleb(
         "split_ratio": split_ratio,
         "save_folder": save_folder,
         "seg_dur": seg_dur,
-        "split_speaker": split_speaker,
+        "split_instrument": split_instrument,
     }
 
     if not os.path.exists(save_folder):
@@ -108,7 +112,7 @@ def prepare_voxceleb(
     save_csv_train = os.path.join(save_folder, TRAIN_CSV)
     save_csv_dev = os.path.join(save_folder, DEV_CSV)
 
-    # Create the data folder contains VoxCeleb1 test data from the source
+    # Create the data folder contains test data from the source
     if source is not None:
         if not os.path.exists(os.path.join(data_folder, "wav", "id10270")):
             logger.info(f"Extracting {source}/{TEST_WAV} to {data_folder}")
@@ -130,14 +134,14 @@ def prepare_voxceleb(
     else:
         data_folder = [data_folder]
 
-    # _check_voxceleb1_folders(data_folder, splits)
+    # _check_nsynth_folders(data_folder, splits)
 
-    msg = "\tCreating csv file for the VoxCeleb Dataset.."
+    msg = "\tCreating csv file for the Nsynth Dataset.."
     logger.info(msg)
 
     # Split data into 90% train and 10% validation (verification split)
-    wav_lst_train, wav_lst_dev = _get_utt_split_lists(
-        data_folder, split_ratio, verification_pairs_file, split_speaker
+    wav_lst_train, wav_lst_dev = _get_sound_split_lists(
+        data_folder, split_ratio, split_instrument
     )
 
     # Creating csv file for training data
@@ -197,7 +201,7 @@ def skip(splits, save_folder, conf):
     return skip
 
 
-def _check_voxceleb_folders(data_folders, splits):
+def _check_nsynth_folders(data_folders, splits):
     """
     Check if the data folder actually contains the Voxceleb1 dataset.
 
@@ -228,7 +232,7 @@ def _check_voxceleb_folders(data_folders, splits):
             if not os.path.exists(folder):
                 err_msg = (
                     "the folder %s does not exist (as it is expected in "
-                    "the Voxceleb dataset)" % folder
+                    "the nsynth dataset)" % folder
                 )
                 raise FileNotFoundError(err_msg)
 
@@ -236,15 +240,13 @@ def _check_voxceleb_folders(data_folders, splits):
         if not os.path.exists(folder):
             err_msg = (
                 "the folder %s does not exist (as it is expected in "
-                "the Voxceleb dataset)" % folder
+                "the nsynth dataset)" % folder
             )
             raise FileNotFoundError(err_msg)
 
 
 # Used for verification split
-def _get_utt_split_lists(
-    data_folders, split_ratio, verification_pairs_file, split_speaker=False
-):
+def _get_sound_split_lists(data_folders, split_ratio, split_instrument=False):
     """
     Tot. number of speakers vox1= 1211.
     Tot. number of speakers vox2= 5994.
@@ -257,21 +259,16 @@ def _get_utt_split_lists(
     print("Getting file list...")
     for data_folder in data_folders:
 
-        test_lst = [
-            line.rstrip("\n").split(" ")[1]
-            for line in open(verification_pairs_file)
-        ]
-        test_lst = set(sorted(test_lst))
-
-        test_spks = [snt.split("/")[0] for snt in test_lst]
-
+        test_insts = set(os.listdir(ORIGIN_TEST))
+        print(len(test_insts))
         path = os.path.join(data_folder, "wav", "**", "*.wav")
-        if split_speaker:
+
+        if split_instrument:
             # avoid test speakers for train and dev splits
             audio_files_dict = {}
             for f in glob.glob(path, recursive=True):
                 spk_id = f.split("/wav/")[1].split("/")[0]
-                if spk_id not in test_spks:
+                if spk_id not in test_insts:
                     audio_files_dict.setdefault(spk_id, []).append(f)
 
             spk_id_list = list(audio_files_dict.keys())
@@ -291,7 +288,7 @@ def _get_utt_split_lists(
                 except ValueError:
                     logger.info(f"Malformed path: {f}")
                     continue
-                if spk_id not in test_spks:
+                if spk_id not in test_insts:
                     audio_files_list.append(f)
 
             random.shuffle(audio_files_list)
@@ -343,7 +340,7 @@ def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
     msg = '\t"Creating csv lists in  %s..."' % (csv_file)
     logger.info(msg)
 
-    csv_output = [["ID", "duration", "wav", "start", "stop", "spk_id"]]
+    csv_output = [["ID", "duration", "wav", "start", "stop", "inst_id"]]
 
     # For assigning unique ID to each chunk
     my_sep = "--"
@@ -446,7 +443,7 @@ def prepare_csv_enrol_test(data_folders, save_folder, verification_pairs_file):
 
         enrol_ids, test_ids = [], []
 
-        # Get unique ids (enrol and test utterances)
+        # Get unique ids (enrol and test sound)
         for line in open(test_lst_file):
             e_id = line.split(" ")[1].rstrip().split(".")[0].strip()
             t_id = line.split(" ")[2].rstrip().split(".")[0].strip()
