@@ -80,7 +80,7 @@ class SpeakerBrain(sb.core.Brain):
         """
         predictions, lens = predictions
         uttid = batch.id
-        spkid, _ = batch.spk_id_encoded
+        spkid, _ = batch.inst_id_encoded
 
         # Concatenate labels (due to data augmentation)
         if stage == sb.Stage.TRAIN:
@@ -168,12 +168,12 @@ def dataio_prep(hparams):
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline)
 
     # 3. Define text pipeline:
-    @sb.utils.data_pipeline.takes("spk_id")
-    @sb.utils.data_pipeline.provides("spk_id", "spk_id_encoded")
-    def label_pipeline(spk_id):
-        yield spk_id
-        spk_id_encoded = label_encoder.encode_sequence_torch([spk_id])
-        yield spk_id_encoded
+    @sb.utils.data_pipeline.takes("inst_id")
+    @sb.utils.data_pipeline.provides("inst_id", "inst_id_encoded")
+    def label_pipeline(inst_id):
+        yield inst_id
+        inst_id_encoded = label_encoder.encode_sequence_torch([inst_id])
+        yield inst_id_encoded
 
     sb.dataio.dataset.add_dynamic_item(datasets, label_pipeline)
 
@@ -181,11 +181,13 @@ def dataio_prep(hparams):
     # Load or compute the label encoder (with multi-GPU DDP support)
     lab_enc_file = os.path.join(hparams["save_folder"], "label_encoder.txt")
     label_encoder.load_or_create(
-        path=lab_enc_file, from_didatasets=[train_data], output_key="spk_id",
+        path=lab_enc_file, from_didatasets=[train_data], output_key="inst_id",
     )
 
     # 4. Set output:
-    sb.dataio.dataset.set_output_keys(datasets, ["id", "sig", "spk_id_encoded"])
+    sb.dataio.dataset.set_output_keys(
+        datasets, ["id", "sig", "inst_id_encoded"]
+    )
 
     return train_data, valid_data, label_encoder
 
@@ -212,10 +214,10 @@ if __name__ == "__main__":
     download_file(hparams["verification_file"], veri_file_path)
 
     # Dataset prep (parsing VoxCeleb and annotation into csv files)
-    from voxceleb_prepare import prepare_voxceleb  # noqa
+    from data_prepare import prepare_nsynth  # noqa
 
     run_on_main(
-        prepare_voxceleb,
+        prepare_nsynth,
         kwargs={
             "data_folder": hparams["data_folder"],
             "save_folder": hparams["save_folder"],

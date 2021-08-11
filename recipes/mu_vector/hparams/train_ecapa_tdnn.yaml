@@ -11,7 +11,7 @@ save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
 # Data files
-data_folder: !PLACEHOLDER  # e.g. /path/to/Voxceleb
+data_folder: data  # e.g. /path/to/Voxceleb
 train_annotation: !ref <save_folder>/train.csv
 valid_annotation: !ref <save_folder>/dev.csv
 
@@ -24,14 +24,15 @@ rir_folder: !ref <data_folder> # Change it if needed
 # VoxCeleb1-E (cleaned): https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/list_test_all2.txt.
 # VoxCeleb1-E and VoxCeleb1-H lists are drawn from the VoxCeleb1 training set.
 # Therefore you cannot use any files in VoxCeleb1 for training if you are using these lists for testing.
-verification_file: https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/veri_test2.txt
+# verification_file: https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/veri_test2.txt
+verification_file: 'veri_test.txt'
 
 skip_prep: False
 ckpt_interval_minutes: 15 # save checkpoint every N min
 
 # Training parameters
 number_of_epochs: 10
-batch_size: 32
+batch_size: 8
 lr: 0.001
 base_lr: 0.00000001
 max_lr: !ref <lr>
@@ -48,7 +49,8 @@ right_frames: 0
 deltas: False
 
 # Number of speakers
-out_n_neurons: 7205 #1211 for vox1  # 5994 for vox2, 7205 for vox1+vox2
+# out_n_neurons: 7205 #1211 for vox1  # 5994 for vox2, 7205 for vox1+vox2
+out_n_neurons: 1006
 
 dataloader_options:
     batch_size: !ref <batch_size>

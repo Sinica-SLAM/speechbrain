@@ -9,7 +9,6 @@ import csv
 import logging
 import glob
 import random
-import shutil
 import sys  # noqa F401
 import numpy as np
 import torch
@@ -32,10 +31,6 @@ SAMPLERATE = 16000
 # DEV_WAV = "vox1_dev_wav.zip"
 TEST_WAV = "vox1_test_wav.zip"
 META = "meta"
-
-ORIGIN_TRAIN = "/mnt/md1/datasets/Nsynth/nsynth-train/audio"
-ORIGIN_VALID = "/mnt/md1/datasets/Nsynth/nsynth-valid/audio"
-ORIGIN_TEST = "/mnt/md1/datasets/Nsynth/nsynth-test/audio"
 
 
 def prepare_nsynth(
@@ -74,7 +69,7 @@ def prepare_nsynth(
         removes segments whose average amplitude is below the
         given threshold.
     source : str
-        Path to the folder where the VoxCeleb dataset source is stored.
+        Path to the folder where the Nsynth dataset source is stored.
     split_instrument : bool
         Instrument-wise split
     random_segment : bool
@@ -85,8 +80,8 @@ def prepare_nsynth(
     Example
     -------
     >>> from recipes.mu_vector.data_prepare import prepare_nsynth
-    >>> data_folder = 'data/nsynth/'
-    >>> save_folder = 'VoxData/'
+    >>> data_folder = 'data'
+    >>> save_folder = 'data'
     >>> splits = ['train', 'dev']
     >>> split_ratio = [90, 10]
     >>> prepare_nsynth(data_folder, save_folder, splits, split_ratio)
@@ -114,14 +109,8 @@ def prepare_nsynth(
 
     # Create the data folder contains test data from the source
     if source is not None:
-        if not os.path.exists(os.path.join(data_folder, "wav", "id10270")):
-            logger.info(f"Extracting {source}/{TEST_WAV} to {data_folder}")
-            shutil.unpack_archive(os.path.join(source, TEST_WAV), data_folder)
-        if not os.path.exists(os.path.join(data_folder, "meta")):
-            logger.info(f"Copying {source}/meta to {data_folder}")
-            shutil.copytree(
-                os.path.join(source, "meta"), os.path.join(data_folder, "meta")
-            )
+        logger.info("Please Extract Nsynth from original datadir first.")
+        return
 
     # Check if this phase is already done (if so, skip it)
     if skip(splits, save_folder, conf):
@@ -141,7 +130,7 @@ def prepare_nsynth(
 
     # Split data into 90% train and 10% validation (verification split)
     wav_lst_train, wav_lst_dev = _get_sound_split_lists(
-        data_folder, split_ratio, split_instrument
+        data_folder, split_ratio, verification_pairs_file, split_instrument
     )
 
     # Creating csv file for training data
@@ -203,7 +192,7 @@ def skip(splits, save_folder, conf):
 
 def _check_nsynth_folders(data_folders, splits):
     """
-    Check if the data folder actually contains the Voxceleb1 dataset.
+    Check if the data folder actually contains the Nsynth dataset.
 
     If it does not, raise an error.
 
@@ -218,17 +207,15 @@ def _check_nsynth_folders(data_folders, splits):
     for data_folder in data_folders:
 
         if "train" in splits:
-            folder_vox1 = os.path.join(data_folder, "wav", "id10001")
-            folder_vox2 = os.path.join(data_folder, "wav", "id00012")
-
-            if not os.path.exists(folder_vox1) or not os.path.exists(
-                folder_vox2
-            ):
-                err_msg = "the specified folder does not contain Voxceleb"
+            folder_nsynth = os.path.join(
+                data_folder, "wav", "keyboard_electronic_070"
+            )
+            if not os.path.exists(folder_nsynth):
+                err_msg = "the specified folder does not contain Nsynth"
                 raise FileNotFoundError(err_msg)
 
         if "test" in splits:
-            folder = os.path.join(data_folder, "wav", "id10270")
+            folder = os.path.join(data_folder, "wav", "vocal_synthetic_000")
             if not os.path.exists(folder):
                 err_msg = (
                     "the folder %s does not exist (as it is expected in "
@@ -246,10 +233,11 @@ def _check_nsynth_folders(data_folders, splits):
 
 
 # Used for verification split
-def _get_sound_split_lists(data_folders, split_ratio, split_instrument=False):
+def _get_sound_split_lists(
+    data_folders, split_ratio, verification_pairs_file, split_instrument=False
+):
     """
-    Tot. number of speakers vox1= 1211.
-    Tot. number of speakers vox2= 5994.
+    Tot. number of nsynths = 1005.
     Splits the audio file list into train and dev.
     This function automatically removes verification test files from the training and dev set (if any).
     """
@@ -259,36 +247,41 @@ def _get_sound_split_lists(data_folders, split_ratio, split_instrument=False):
     print("Getting file list...")
     for data_folder in data_folders:
 
-        test_insts = set(os.listdir(ORIGIN_TEST))
-        print(len(test_insts))
+        test_lst = [
+            line.rstrip("\n").split(" ")[1]
+            for line in open(verification_pairs_file)
+        ]
+        test_lst = set(sorted(test_lst))
+        test_insts = [snt.split("/")[0] for snt in test_lst]
+
         path = os.path.join(data_folder, "wav", "**", "*.wav")
 
         if split_instrument:
             # avoid test speakers for train and dev splits
             audio_files_dict = {}
             for f in glob.glob(path, recursive=True):
-                spk_id = f.split("/wav/")[1].split("/")[0]
-                if spk_id not in test_insts:
-                    audio_files_dict.setdefault(spk_id, []).append(f)
+                inst_id = f.split("/wav/")[1].split("/")[0]
+                if inst_id not in test_insts:
+                    audio_files_dict.setdefault(inst_id, []).append(f)
 
-            spk_id_list = list(audio_files_dict.keys())
-            random.shuffle(spk_id_list)
-            split = int(0.01 * split_ratio[0] * len(spk_id_list))
-            for spk_id in spk_id_list[:split]:
-                train_lst.extend(audio_files_dict[spk_id])
+            inst_id_list = list(audio_files_dict.keys())
+            random.shuffle(inst_id_list)
+            split = int(0.01 * split_ratio[0] * len(inst_id_list))
+            for inst_id in inst_id_list[:split]:
+                train_lst.extend(audio_files_dict[inst_id])
 
-            for spk_id in spk_id_list[split:]:
-                dev_lst.extend(audio_files_dict[spk_id])
+            for inst_id in inst_id_list[split:]:
+                dev_lst.extend(audio_files_dict[inst_id])
         else:
             # avoid test speakers for train and dev splits
             audio_files_list = []
             for f in glob.glob(path, recursive=True):
                 try:
-                    spk_id = f.split("/wav/")[1].split("/")[0]
+                    inst_id = f.split("/wav/")[1].split("/")[0]
                 except ValueError:
                     logger.info(f"Malformed path: {f}")
                     continue
-                if spk_id not in test_insts:
+                if inst_id not in test_insts:
                     audio_files_list.append(f)
 
             random.shuffle(audio_files_list)
@@ -349,11 +342,12 @@ def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
     for wav_file in tqdm(wav_lst, dynamic_ncols=True):
         # Getting sentence and speaker ids
         try:
-            [spk_id, sess_id, utt_id] = wav_file.split("/")[-3:]
+            inst_id = wav_file.split("/")[-2]
+            pitch, velocity = wav_file.split("/")[-1].split("-")
         except ValueError:
             logger.info(f"Malformed path: {wav_file}")
             continue
-        audio_id = my_sep.join([spk_id, sess_id, utt_id.split(".")[0]])
+        audio_id = my_sep.join([inst_id, pitch, velocity.split(".")[0]])
 
         # Reading the signal (to retrieve duration in seconds)
         signal, fs = torchaudio.load(wav_file)
@@ -371,7 +365,7 @@ def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
                 wav_file,
                 start_sample,
                 stop_sample,
-                spk_id,
+                inst_id,
             ]
             entry.append(csv_line)
         else:
@@ -395,7 +389,7 @@ def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
                     wav_file,
                     start_sample,
                     end_sample,
-                    spk_id,
+                    inst_id,
                 ]
                 entry.append(csv_line)
 
@@ -434,7 +428,7 @@ def prepare_csv_enrol_test(data_folders, save_folder, verification_pairs_file):
     # logger.debug(msg)
 
     csv_output_head = [
-        ["ID", "duration", "wav", "start", "stop", "spk_id"]
+        ["ID", "duration", "wav", "start", "stop", "inst_id"]
     ]  # noqa E231
 
     for data_folder in data_folders:
@@ -465,7 +459,8 @@ def prepare_csv_enrol_test(data_folders, save_folder, verification_pairs_file):
             audio_duration = signal.shape[0] / SAMPLERATE
             start_sample = 0
             stop_sample = signal.shape[0]
-            [spk_id, sess_id, utt_id] = wav.split("/")[-3:]
+            inst_id = wav.split("/")[-2]
+            pitch, velocity = wav.split("/")[-1].split("-")
 
             csv_line = [
                 id,
@@ -473,7 +468,7 @@ def prepare_csv_enrol_test(data_folders, save_folder, verification_pairs_file):
                 wav,
                 start_sample,
                 stop_sample,
-                spk_id,
+                inst_id,
             ]
 
             enrol_csv.append(csv_line)
@@ -501,7 +496,8 @@ def prepare_csv_enrol_test(data_folders, save_folder, verification_pairs_file):
             audio_duration = signal.shape[0] / SAMPLERATE
             start_sample = 0
             stop_sample = signal.shape[0]
-            [spk_id, sess_id, utt_id] = wav.split("/")[-3:]
+            inst_id = wav.split("/")[-2]
+            pitch, velocity = wav.split("/")[-1].split("-")
 
             csv_line = [
                 id,
@@ -509,7 +505,7 @@ def prepare_csv_enrol_test(data_folders, save_folder, verification_pairs_file):
                 wav,
                 start_sample,
                 stop_sample,
-                spk_id,
+                inst_id,
             ]
 
             test_csv.append(csv_line)
