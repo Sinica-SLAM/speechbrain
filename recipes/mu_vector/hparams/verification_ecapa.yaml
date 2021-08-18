@@ -8,9 +8,9 @@ seed: 1234
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
 
 # Folders and train_log file
-voxceleb_source: /network/datasets/restricted/voxceleb_users/voxceleb/voxceleb1
-data_folder: !PLACEHOLDER #e.g., /localscratch/voxceleb1
-output_folder: results/voxceleb1_2/speaker_verification_ecapa_big
+# voxceleb_source: /network/datasets/restricted/voxceleb_users/voxceleb/voxceleb1
+data_folder: data #e.g., /localscratch/voxceleb1
+output_folder: results/ecapa_augment/<seed>/speaker_verification_ecapa
 save_folder: !ref <output_folder>/save/
 device: 'cuda:0'
 
@@ -28,7 +28,7 @@ verification_file: 'veri_test.txt'
 # is downloaded from the speechbrain HuggingFace repository.
 # However, a local path pointing to a directory containing your checkpoints may also be specified
 # instead (see pretrainer below)
-pretrain_path: speechbrain/spkrec-ecapa-voxceleb
+pretrain_path: !ref /mnt/md1/user_victor/speechbrain/recipes/VoxCeleb/SpeakerRec/results/ecapa_ext/<seed>/save/CKPT+2021-05-05+17-11-32+00
 
 # csv files
 train_data: !ref <save_folder>/train.csv

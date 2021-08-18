@@ -6,9 +6,9 @@ Download: https://magenta.tensorflow.org/datasets/nsynth
 
 import os
 import csv
+import json
 import logging
 import glob
-import random
 import sys  # noqa F401
 import numpy as np
 import torch
@@ -26,10 +26,6 @@ DEV_CSV = "dev.csv"
 TEST_CSV = "test.csv"
 ENROL_CSV = "enrol.csv"
 SAMPLERATE = 16000
-
-
-# DEV_WAV = "vox1_dev_wav.zip"
-TEST_WAV = "vox1_test_wav.zip"
 META = "meta"
 
 
@@ -37,8 +33,10 @@ def prepare_nsynth(
     data_folder,
     save_folder,
     verification_pairs_file,
+    meta_train,
+    meta_valid,
+    meta_test,
     splits=["train", "dev", "test"],
-    split_ratio=[90, 10],
     seg_dur=3.0,
     amp_th=5e-04,
     source=None,
@@ -61,8 +59,6 @@ def prepare_nsynth(
         txt file containing the verification split.
     splits : list
         List of splits to prepare from ['train', 'dev']
-    split_ratio : list
-        List if int for train and validation splits
     seg_dur : int
         Segment duration of a chunk in seconds (e.g., 3.0 seconds).
     amp_th : float
@@ -82,9 +78,8 @@ def prepare_nsynth(
     >>> from recipes.mu_vector.data_prepare import prepare_nsynth
     >>> data_folder = 'data'
     >>> save_folder = 'data'
-    >>> splits = ['train', 'dev']
-    >>> split_ratio = [90, 10]
-    >>> prepare_nsynth(data_folder, save_folder, splits, split_ratio)
+    >>> splits = ['train', 'dev', 'test']
+    >>> prepare_nsynth(data_folder, save_folder, splits)
     """
 
     if skip_prep:
@@ -93,10 +88,8 @@ def prepare_nsynth(
     conf = {
         "data_folder": data_folder,
         "splits": splits,
-        "split_ratio": split_ratio,
         "save_folder": save_folder,
         "seg_dur": seg_dur,
-        "split_instrument": split_instrument,
     }
 
     if not os.path.exists(save_folder):
@@ -130,7 +123,7 @@ def prepare_nsynth(
 
     # Split data into 90% train and 10% validation (verification split)
     wav_lst_train, wav_lst_dev = _get_sound_split_lists(
-        data_folder, split_ratio, verification_pairs_file, split_instrument
+        data_folder, meta_train, meta_valid
     )
 
     # Creating csv file for training data
@@ -142,7 +135,7 @@ def prepare_nsynth(
     if "dev" in splits:
         prepare_csv(seg_dur, wav_lst_dev, save_csv_dev, random_segment, amp_th)
 
-    # For PLDA verification
+    # For PLDA verification or test on instrument family classification
     if "test" in splits:
         prepare_csv_enrol_test(
             data_folder, save_folder, verification_pairs_file
@@ -233,11 +226,9 @@ def _check_nsynth_folders(data_folders, splits):
 
 
 # Used for verification split
-def _get_sound_split_lists(
-    data_folders, split_ratio, verification_pairs_file, split_instrument=False
-):
+def _get_sound_split_lists(data_folders, meta_train, meta_valid):
     """
-    Tot. number of nsynths = 1005.
+    Tot. number of nsynths = 1006.
     Splits the audio file list into train and dev.
     This function automatically removes verification test files from the training and dev set (if any).
     """
@@ -247,50 +238,39 @@ def _get_sound_split_lists(
     print("Getting file list...")
     for data_folder in data_folders:
 
-        test_lst = [
-            line.rstrip("\n").split(" ")[1]
-            for line in open(verification_pairs_file)
-        ]
-        test_lst = set(sorted(test_lst))
-        test_insts = [snt.split("/")[0] for snt in test_lst]
+        train_snts = []
+        dev_snts = []
+
+        # load meta data
+        f = open(meta_train)
+        train_insts = json.load(f)
+        train_insts = list(train_insts.keys())
+
+        f = open(meta_valid)
+        valid_insts = json.load(f)
+        valid_insts = list(valid_insts.keys())
 
         path = os.path.join(data_folder, "wav", "**", "*.wav")
 
-        if split_instrument:
-            # avoid test speakers for train and dev splits
-            audio_files_dict = {}
-            for f in glob.glob(path, recursive=True):
-                inst_id = f.split("/wav/")[1].split("/")[0]
-                if inst_id not in test_insts:
-                    audio_files_dict.setdefault(inst_id, []).append(f)
+        # avoid test speakers for train and dev splits
+        for f in tqdm(glob.glob(path, recursive=True)):
+            try:
+                sound_id = (
+                    f.split("/wav/")[1].split("/")[0]
+                    + "-"
+                    + f.split("/wav/")[1].split("/")[1]
+                )
+                sound_id = sound_id.replace(".wav", "")
+            except ValueError:
+                logger.info(f"Malformed path: {f}")
+                continue
+            if sound_id in train_insts:
+                train_snts.append(f)
+            elif sound_id in valid_insts:
+                dev_snts.append(f)
 
-            inst_id_list = list(audio_files_dict.keys())
-            random.shuffle(inst_id_list)
-            split = int(0.01 * split_ratio[0] * len(inst_id_list))
-            for inst_id in inst_id_list[:split]:
-                train_lst.extend(audio_files_dict[inst_id])
-
-            for inst_id in inst_id_list[split:]:
-                dev_lst.extend(audio_files_dict[inst_id])
-        else:
-            # avoid test speakers for train and dev splits
-            audio_files_list = []
-            for f in glob.glob(path, recursive=True):
-                try:
-                    inst_id = f.split("/wav/")[1].split("/")[0]
-                except ValueError:
-                    logger.info(f"Malformed path: {f}")
-                    continue
-                if inst_id not in test_insts:
-                    audio_files_list.append(f)
-
-            random.shuffle(audio_files_list)
-            split = int(0.01 * split_ratio[0] * len(audio_files_list))
-            train_snts = audio_files_list[:split]
-            dev_snts = audio_files_list[split:]
-
-            train_lst.extend(train_snts)
-            dev_lst.extend(dev_snts)
+        train_lst.extend(train_snts)
+        dev_lst.extend(dev_snts)
 
     return train_lst, dev_lst
 
@@ -333,7 +313,9 @@ def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
     msg = '\t"Creating csv lists in  %s..."' % (csv_file)
     logger.info(msg)
 
-    csv_output = [["ID", "duration", "wav", "start", "stop", "inst_id"]]
+    csv_output = [
+        ["ID", "duration", "wav", "start", "stop", "inst_id", "inst_family"]
+    ]
 
     # For assigning unique ID to each chunk
     my_sep = "--"
@@ -344,6 +326,7 @@ def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
         try:
             inst_id = wav_file.split("/")[-2]
             pitch, velocity = wav_file.split("/")[-1].split("-")
+            inst_family = inst_id.split("_")[0]
         except ValueError:
             logger.info(f"Malformed path: {wav_file}")
             continue
@@ -366,6 +349,7 @@ def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
                 start_sample,
                 stop_sample,
                 inst_id,
+                inst_family,
             ]
             entry.append(csv_line)
         else:
@@ -390,6 +374,7 @@ def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
                     start_sample,
                     end_sample,
                     inst_id,
+                    inst_family,
                 ]
                 entry.append(csv_line)
 
@@ -428,7 +413,7 @@ def prepare_csv_enrol_test(data_folders, save_folder, verification_pairs_file):
     # logger.debug(msg)
 
     csv_output_head = [
-        ["ID", "duration", "wav", "start", "stop", "inst_id"]
+        ["ID", "duration", "wav", "start", "stop", "inst_id", "inst_family"]
     ]  # noqa E231
 
     for data_folder in data_folders:
@@ -461,6 +446,7 @@ def prepare_csv_enrol_test(data_folders, save_folder, verification_pairs_file):
             stop_sample = signal.shape[0]
             inst_id = wav.split("/")[-2]
             pitch, velocity = wav.split("/")[-1].split("-")
+            inst_family = inst_id.split("_")[0]
 
             csv_line = [
                 id,
@@ -469,6 +455,7 @@ def prepare_csv_enrol_test(data_folders, save_folder, verification_pairs_file):
                 start_sample,
                 stop_sample,
                 inst_id,
+                inst_family,
             ]
 
             enrol_csv.append(csv_line)
@@ -498,6 +485,7 @@ def prepare_csv_enrol_test(data_folders, save_folder, verification_pairs_file):
             stop_sample = signal.shape[0]
             inst_id = wav.split("/")[-2]
             pitch, velocity = wav.split("/")[-1].split("-")
+            inst_family = inst_id.split("_")[0]
 
             csv_line = [
                 id,
@@ -506,6 +494,7 @@ def prepare_csv_enrol_test(data_folders, save_folder, verification_pairs_file):
                 start_sample,
                 stop_sample,
                 inst_id,
+                inst_family,
             ]
 
             test_csv.append(csv_line)

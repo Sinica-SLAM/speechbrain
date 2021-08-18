@@ -9,6 +9,12 @@ class rearrange_nsynth:
     def __init__(self, args):
 
         self.args = args
+        self.origin_metadata_paths = [
+            Path(self.args.origin_dir) / Path("nsynth-train/examples.json"),
+            Path(self.args.origin_dir) / Path("nsynth-valid/examples.json"),
+            Path(self.args.origin_dir) / Path("nsynth-test/examples.json"),
+        ]
+
         self.origin_datapaths = [
             Path(self.args.origin_dir) / Path("nsynth-train/audio"),
             Path(self.args.origin_dir) / Path("nsynth-valid/audio"),
@@ -16,13 +22,24 @@ class rearrange_nsynth:
         ]
 
         self.target_datapath = Path(self.args.target_dir) / Path("data/wav")
-        self.meta_dir = Path(self.args.meta_dir) / Path("data/meta")
+        self.meta_dir = Path(self.args.target_dir) / Path("data/meta")
         self.meta_file = Path("iden_split.txt")
 
     def restore_nsynth(self):
         """
         Restore Nsynth dataset in terms of voxceleb dataset for "instrument verification" training.
         """
+
+        # Copy metadata
+        print("Copy meta data.")
+        for metadata_path, dst in zip(
+            self.origin_metadata_paths,
+            ["train.json", "valid.json", "test.json"],
+        ):
+            if not self.meta_dir.exists():
+                Path.mkdir(self.meta_dir, parents=True, exist_ok=True)
+
+            copyfile(metadata_path, self.meta_dir / dst)
 
         for datapath in self.origin_datapaths:
             paths = [p for p in datapath.iterdir()]
@@ -152,11 +169,6 @@ def main():
     )
     parser.add_argument(
         "-target_dir",
-        type=str,
-        default="/mnt/md1/user_victor/speechbrain/recipes/mu_vector",
-    )
-    parser.add_argument(
-        "-meta_dir",
         type=str,
         default="/mnt/md1/user_victor/speechbrain/recipes/mu_vector",
     )
