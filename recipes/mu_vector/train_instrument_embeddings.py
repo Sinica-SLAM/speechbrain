@@ -142,7 +142,12 @@ def dataio_prep(hparams):
         replacements={"data_root": data_folder},
     )
 
-    datasets = [train_data, valid_data]
+    test_data = sb.dataio.dataset.DynamicItemDataset.from_csv(
+        csv_path=hparams["test_annotation"],
+        replacements={"data_root": data_folder},
+    )
+
+    datasets = [train_data, valid_data, test_data]
     label_encoder = sb.dataio.encoder.CategoricalEncoder()
 
     snt_len_sample = int(hparams["sample_rate"] * hparams["sentence_len"])
@@ -189,7 +194,7 @@ def dataio_prep(hparams):
         datasets, ["id", "sig", "inst_id_encoded"]
     )
 
-    return train_data, valid_data, label_encoder
+    return train_data, valid_data, test_data, label_encoder
 
 
 if __name__ == "__main__":
@@ -222,14 +227,16 @@ if __name__ == "__main__":
             "data_folder": hparams["data_folder"],
             "save_folder": hparams["save_folder"],
             "verification_pairs_file": veri_file_path,
-            "splits": ["train", "dev"],
-            "split_ratio": [90, 10],
+            "meta_train": hparams["meta_train"],
+            "meta_valid": hparams["meta_valid"],
+            "meta_test": hparams["meta_test"],
+            "splits": ["train", "dev", "test"],
             "seg_dur": hparams["sentence_len"],
         },
     )
 
     # Dataset IO prep: creating Dataset objects and proper encodings for phones
-    train_data, valid_data, label_encoder = dataio_prep(hparams)
+    train_data, valid_data, test_data, label_encoder = dataio_prep(hparams)
 
     # Create experiment directory
     sb.core.create_experiment_directory(
@@ -255,3 +262,9 @@ if __name__ == "__main__":
         train_loader_kwargs=hparams["dataloader_options"],
         valid_loader_kwargs=hparams["dataloader_options"],
     )
+
+    # Identification test
+#     speaker_brain.evaluate(
+#         test_set = test_data,
+#         test_loader_kwargs=hparams["dataloader_options"],
+#     )

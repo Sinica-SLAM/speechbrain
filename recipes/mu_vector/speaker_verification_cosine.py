@@ -228,7 +228,7 @@ if __name__ == "__main__":
     )
     download_file(params["verification_file"], veri_file_path)
 
-    from voxceleb_prepare import prepare_voxceleb  # noqa E402
+    from data_prepare import prepare_nsynth  # noqa E402
 
     # Create experiment directory
     sb.core.create_experiment_directory(
@@ -238,7 +238,7 @@ if __name__ == "__main__":
     )
 
     # Prepare data from dev of Voxceleb1
-    prepare_voxceleb(
+    prepare_nsynth(
         data_folder=params["data_folder"],
         save_folder=params["save_folder"],
         verification_pairs_file=veri_file_path,
