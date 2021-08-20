@@ -375,8 +375,14 @@ class ECAPA_TDNN(torch.nn.Module):
     >>> input_feats = torch.rand([5, 120, 80])
     >>> compute_embedding = ECAPA_TDNN(80, lin_neurons=192)
     >>> outputs = compute_embedding(input_feats)
-    >>> outputs.shape
-    torch.Size([5, 1, 192])
+    >>> outputs[0].shape
+    torch.Size([5, 192, 1])
+    >>> outputs[1].shape
+    torch.Size([5, 512, 120])
+    >>> outputs[2].shape
+    torch.Size([5, 512, 120])
+    >>> outputs[3].shape
+    torch.Size([5, 512, 120])
     """
 
     def __init__(
@@ -565,8 +571,8 @@ class Classifier(torch.nn.Module):
     Example
     -------
     >>> classify = Classifier(input_size=2, lin_neurons=2, out_neurons=2)
-    >>> outputs = torch.tensor([ [1., -1.], [-9., 1.], [0.9, 0.1], [0.1, 0.9] ])
-    >>> outputs = outputs.unsqueeze(1)
+    >>> outputs = torch.tensor([ [1., -1., -9., 1.], [0.9, 0.1, 0.1, 0.9] ])
+    >>> outputs = outputs.unsqueeze(9)
     >>> cos = classify(outputs)
     >>> (cos < -1.0).long().sum()
     tensor(0)
