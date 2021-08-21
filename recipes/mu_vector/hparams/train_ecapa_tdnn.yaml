@@ -55,7 +55,9 @@ deltas: False
 
 # Number of speakers
 # out_n_neurons: 7205 #1211 for vox1  # 5994 for vox2, 7205 for vox1+vox2
-out_n_neurons: 1006
+number_instruments: 953
+number_families: 11
+out_n_neurons: 964
 
 dataloader_options:
     batch_size: !ref <batch_size>
@@ -173,6 +175,8 @@ train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
 error_stats: !name:speechbrain.utils.metric_stats.MetricStats
     metric: !name:speechbrain.nnet.losses.classification_error
         reduction: batch
+
+f1_computer: !name:speechbrain.utils.f1_score.F1Stats
 
 checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
     checkpoints_dir: !ref <save_folder>

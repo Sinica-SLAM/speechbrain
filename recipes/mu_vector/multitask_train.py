@@ -1,19 +1,3 @@
-#!/usr/bin/python3
-"""Recipe for training speaker embeddings (e.g, xvectors) using the VoxCeleb Dataset.
-We employ an encoder followed by a speaker classifier.
-
-To run this recipe, use the following command:
-> python train_speaker_embeddings.py {hyperparameter_file}
-
-Using your own hyperparameter file or one of the following:
-    hyperparams/train_x_vectors.yaml (for standard xvectors)
-    hyperparams/train_ecapa_tdnn.yaml (for the ecapa+tdnn system)
-
-Author
-    * Mirco Ravanelli 2020
-    * Hwidong Na 2020
-    * Nauman Dawalatabad 2020
-"""
 import os
 import sys
 import random
@@ -79,20 +63,42 @@ class SpeakerBrain(sb.core.Brain):
         """Computes the loss using speaker-id as label.
         """
         predictions, lens = predictions
-        uttid = batch.id
-        spkid, _ = batch.inst_id_encoded
+        sound_id = batch.id
+        inst_id, _ = batch.inst_id_encoded
+        inst_family, _ = batch.inst_family_encoded
 
         # Concatenate labels (due to data augmentation)
+        id_loss = 0
         if stage == sb.Stage.TRAIN:
-            spkid = torch.cat([spkid] * self.n_augment, dim=0)
+            inst_id = torch.cat([inst_id] * self.n_augment, dim=0)
+            inst_family = torch.cat([inst_family] * self.n_augment, dim=0)
+            id_loss = self.hparams.compute_cost(
+                predictions[:, :, : self.hparams.number_instruments],
+                inst_id,
+                lens,
+            )
 
-        loss = self.hparams.compute_cost(predictions, spkid, lens)
+        family_loss = self.hparams.compute_cost(
+            predictions[:, :, self.hparams.number_instruments :],
+            inst_family,
+            lens,
+        )
+        loss = id_loss + family_loss
 
         if hasattr(self.hparams.lr_annealing, "on_batch_end"):
             self.hparams.lr_annealing.on_batch_end(self.optimizer)
 
         if stage != sb.Stage.TRAIN:
-            self.error_metrics.append(uttid, predictions, spkid, lens)
+            self.error_metrics.append(
+                sound_id,
+                predictions[:, :, self.hparams.number_instruments :],
+                inst_family,
+                lens,
+            )
+            self.f1_metrics.append(
+                predictions[:, :, self.hparams.number_instruments :],
+                inst_family,
+            )
 
         return loss
 
@@ -100,6 +106,7 @@ class SpeakerBrain(sb.core.Brain):
         """Gets called at the beginning of an epoch."""
         if stage != sb.Stage.TRAIN:
             self.error_metrics = self.hparams.error_stats()
+            self.f1_metrics = self.hparams.f1_computer()
 
     def on_stage_end(self, stage, stage_loss, epoch=None):
         """Gets called at the end of an epoch."""
@@ -109,6 +116,7 @@ class SpeakerBrain(sb.core.Brain):
             self.train_stats = stage_stats
         else:
             stage_stats["ErrorRate"] = self.error_metrics.summarize("average")
+            stage_stats["F1-score"] = self.f1_metrics.summarize()
 
         # Perform end-of-iteration things, like annealing, logging, etc.
         if stage == sb.Stage.VALID:
@@ -123,6 +131,12 @@ class SpeakerBrain(sb.core.Brain):
             self.checkpointer.save_and_keep_only(
                 meta={"ErrorRate": stage_stats["ErrorRate"]},
                 min_keys=["ErrorRate"],
+            )
+
+        if stage == sb.Stage.TEST:
+            self.hparams.train_logger.log_stats(
+                {"Epoch loaded": self.hparams.epoch_counter.current},
+                test_stats=stage_stats,
             )
 
 
@@ -148,7 +162,8 @@ def dataio_prep(hparams):
     )
 
     datasets = [train_data, valid_data, test_data]
-    label_encoder = sb.dataio.encoder.CategoricalEncoder()
+    inst_label_encoder = sb.dataio.encoder.CategoricalEncoder()
+    family_label_encoder = sb.dataio.encoder.CategoricalEncoder()
 
     snt_len_sample = int(hparams["sample_rate"] * hparams["sentence_len"])
 
@@ -173,28 +188,65 @@ def dataio_prep(hparams):
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline)
 
     # 3. Define text pipeline:
-    @sb.utils.data_pipeline.takes("inst_id")
-    @sb.utils.data_pipeline.provides("inst_id", "inst_id_encoded")
-    def label_pipeline(inst_id):
+    @sb.utils.data_pipeline.takes("inst_id", "inst_family")
+    @sb.utils.data_pipeline.provides(
+        "inst_id", "inst_id_encoded", "inst_family", "inst_family_encoded"
+    )
+    def label_pipeline(inst_id, inst_family):
+
         yield inst_id
-        inst_id_encoded = label_encoder.encode_sequence_torch([inst_id])
+        if inst_id in inst_label_encoder.load_or_create(
+            path=inst_lab_enc_file,
+            from_didatasets=[train_data],
+            output_key="inst_id",
+        ):
+            inst_id_encoded = inst_label_encoder.encode_sequence_torch(
+                [inst_id]
+            )
+        else:
+            inst_id_encoded = torch.Tensor([0])
+
         yield inst_id_encoded
+        yield inst_family
+        inst_family_encoded = family_label_encoder.encode_sequence_torch(
+            [inst_family]
+        )
+        yield inst_family_encoded
 
     sb.dataio.dataset.add_dynamic_item(datasets, label_pipeline)
 
     # 3. Fit encoder:
     # Load or compute the label encoder (with multi-GPU DDP support)
-    lab_enc_file = os.path.join(hparams["save_folder"], "label_encoder.txt")
-    label_encoder.load_or_create(
-        path=lab_enc_file, from_didatasets=[train_data], output_key="inst_id",
+    inst_lab_enc_file = os.path.join(
+        hparams["save_folder"], "inst_label_encoder.txt"
+    )
+    inst_label_encoder.load_or_create(
+        path=inst_lab_enc_file,
+        from_didatasets=[train_data],
+        output_key="inst_id",
+    )
+
+    family_lab_enc_file = os.path.join(
+        hparams["save_folder"], "family_label_encoder.txt"
+    )
+    family_label_encoder.load_or_create(
+        path=family_lab_enc_file,
+        from_didatasets=[train_data],
+        output_key="inst_family",
     )
 
     # 4. Set output:
     sb.dataio.dataset.set_output_keys(
-        datasets, ["id", "sig", "inst_id_encoded"]
+        datasets, ["id", "sig", "inst_id_encoded", "inst_family_encoded"]
     )
 
-    return train_data, valid_data, test_data, label_encoder
+    return (
+        train_data,
+        valid_data,
+        test_data,
+        inst_label_encoder,
+        family_label_encoder,
+    )
 
 
 if __name__ == "__main__":
@@ -236,7 +288,7 @@ if __name__ == "__main__":
     )
 
     # Dataset IO prep: creating Dataset objects and proper encodings for phones
-    train_data, valid_data, test_data, label_encoder = dataio_prep(hparams)
+    train_data, valid_data, test_data, _, _ = dataio_prep(hparams)
 
     # Create experiment directory
     sb.core.create_experiment_directory(
@@ -264,7 +316,6 @@ if __name__ == "__main__":
     )
 
     # Identification test
-#     speaker_brain.evaluate(
-#         test_set = test_data,
-#         test_loader_kwargs=hparams["dataloader_options"],
-#     )
+    speaker_brain.evaluate(
+        test_set=test_data, test_loader_kwargs=hparams["dataloader_options"],
+    )

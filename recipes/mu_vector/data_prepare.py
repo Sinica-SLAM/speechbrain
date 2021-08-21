@@ -251,9 +251,10 @@ def _get_sound_split_lists(data_folders, meta_train, meta_valid):
         valid_insts = list(valid_insts.keys())
 
         path = os.path.join(data_folder, "wav", "**", "*.wav")
+        files = [file for file in glob.glob(path, recursive=True)]
 
         # avoid test speakers for train and dev splits
-        for f in tqdm(glob.glob(path, recursive=True)):
+        for f in tqdm(files):
             try:
                 sound_id = (
                     f.split("/wav/")[1].split("/")[0]
