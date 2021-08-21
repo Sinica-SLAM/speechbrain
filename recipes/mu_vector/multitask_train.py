@@ -195,11 +195,7 @@ def dataio_prep(hparams):
     def label_pipeline(inst_id, inst_family):
 
         yield inst_id
-        if inst_id in inst_label_encoder.load_or_create(
-            path=inst_lab_enc_file,
-            from_didatasets=[train_data],
-            output_key="inst_id",
-        ):
+        if inst_id in inst_ids:
             inst_id_encoded = inst_label_encoder.encode_sequence_torch(
                 [inst_id]
             )
@@ -226,9 +222,14 @@ def dataio_prep(hparams):
         output_key="inst_id",
     )
 
+    inst_ids = list(
+        inst_label_encoder.from_saved(path=inst_lab_enc_file).lab2ind.keys()
+    )
+
     family_lab_enc_file = os.path.join(
         hparams["save_folder"], "family_label_encoder.txt"
     )
+
     family_label_encoder.load_or_create(
         path=family_lab_enc_file,
         from_didatasets=[train_data],
