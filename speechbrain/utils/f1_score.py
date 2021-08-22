@@ -34,12 +34,11 @@ def micro_f1(pred_onehot, target_onehot):
 
     epsilon = 1e-7
 
-    precision = tp / (tp + fp + epsilon)
-    recall = tp / (tp + fn + epsilon)
+    numer = tp
+    denom = tp + 1 / 2 * (fp + fn + epsilon)
+    f1 = numer / denom
 
-    f1 = 2 * precision * recall / (precision + recall + epsilon)
-
-    return float(f1)
+    return numer, denom, f1
 
 
 def macro_f1(pred_onehot, target_onehot):
@@ -69,12 +68,11 @@ def macro_f1(pred_onehot, target_onehot):
 
     epsilon = 1e-7
 
-    precision = tp / (tp + fp + epsilon)
-    recall = tp / (tp + fn + epsilon)
+    numers = tp
+    denoms = tp + 1 / 2 * (fp + fn + epsilon)
+    f1 = torch.mean(numers / denoms)
 
-    f1 = 2 * precision * recall / (precision + recall + epsilon)
-
-    return float(torch.mean(f1))
+    return numers, denoms, f1
 
 
 class F1Stats:
@@ -91,8 +89,10 @@ class F1Stats:
     """
 
     def __init__(self):
-        self.micro_f1 = 0
-        self.macro_f1 = 0
+        self.micro_numer = 0
+        self.micro_denom = 0
+        self.macro_numer = 0
+        self.macro_denom = 0
 
     def append(self, probs, target_indices, length=None):
         """This function is for updating the stats according to the prediction
@@ -115,14 +115,19 @@ class F1Stats:
 
         target_onehot = F.one_hot(target_indices.squeeze(), n_class)
 
-        micro_f1_score = micro_f1(pred_onehot, target_onehot)
-        macro_f1_score = macro_f1(pred_onehot, target_onehot)
+        micro_numer, micro_denom, _ = micro_f1(pred_onehot, target_onehot)
+        macro_numers, macro_denoms, _ = macro_f1(pred_onehot, target_onehot)
 
-        self.micro_f1 = micro_f1_score
-        self.macro_f1 = macro_f1_score
+        self.micro_numer += micro_numer
+        self.micro_denom += micro_denom
+        self.macro_numer += macro_numers
+        self.macro_denom += macro_denoms
 
     def summarize(self):
-        return {
-            "micro-f1": round(self.micro_f1, 3),
-            "macro-f1": round(self.macro_f1, 3),
-        }
+
+        micro_f1 = round(float(self.micro_numer / self.micro_denom), 3)
+        macro_f1 = round(
+            float(torch.mean(self.macro_numer / self.macro_denom)), 3
+        )
+
+        return {"micro-f1": micro_f1, "macro-f1": macro_f1}
