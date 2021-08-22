@@ -252,6 +252,8 @@ def _get_sound_split_lists(data_folders, meta_train, meta_valid):
 
         path = os.path.join(data_folder, "wav", "**", "*.wav")
         files = [file for file in glob.glob(path, recursive=True)]
+        # import random
+        # files = random.sample(files,500)
 
         # avoid test speakers for train and dev splits
         for f in tqdm(files):

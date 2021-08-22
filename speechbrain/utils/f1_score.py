@@ -24,7 +24,7 @@ def micro_f1(pred_onehot, target_onehot):
     >>> onehot = torch.tensor([[1, 0], [0, 1], [1, 0]])
     >>> micro_f1_score = micro_f1(onehot, torch.tensor([[1, 0], [0, 1], [1, 0]]))
     >>> print(micro_f1_score)
-    1.0
+    (tensor(3), tensor(3.), tensor(1.))
     """
 
     tp = torch.sum(pred_onehot * target_onehot)
@@ -58,7 +58,7 @@ def macro_f1(pred_onehot, target_onehot):
     >>> onehot = torch.tensor([[1, 0], [0, 1], [1, 0]])
     >>> macro_f1_score = macro_f1(onehot, torch.tensor([[1, 0], [0, 1], [1, 0]]))
     >>> print(macro_f1_score)
-    0.9999998807907104
+    (tensor([2, 1]), tensor([2., 1.]), tensor(1.))
     """
 
     tp = torch.sum(pred_onehot * target_onehot, axis=0)
