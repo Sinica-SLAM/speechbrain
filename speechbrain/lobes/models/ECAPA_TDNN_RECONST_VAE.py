@@ -522,12 +522,12 @@ class Generator(torch.nn.Module):
         Whether to remove the latent variable concatenation. Is only applicable if latent_vae is False
     """
 
-    def __init__(self, channels, kernel_sizes):
+    def __init__(self, channels, kernel_sizes, output_layer):
         super().__init__()
         self.DecodeLayers = torch.nn.ModuleList()
         self.kernel_sizes = kernel_sizes
         self.DecoderChannels = channels
-
+        self.output_layer = output_layer
         # Create encoder and decoder layers.
         for i in range(len(self.DecoderChannels) - 1):
             self.DecodeLayers.append(
@@ -546,12 +546,14 @@ class Generator(torch.nn.Module):
         # decode
         for i, layer in enumerate(self.DecodeLayers):
             x = layer(x)
+            if i == self.output_layer - 1:
+                mu_vector = x
             if i == len(self.DecodeLayers) - 1:
                 continue
             else:
                 x = F.leaky_relu(x, negative_slope=0.3)
         x = x.permute(0, 2, 1)
-        return x
+        return x, mu_vector
 
 
 class Classifier(torch.nn.Module):

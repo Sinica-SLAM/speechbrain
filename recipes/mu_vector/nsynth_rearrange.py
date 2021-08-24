@@ -164,13 +164,9 @@ def main():
         description="Set configs to rearrange nsynth."
     )
 
+    parser.add_argument("-origin_dir", type=str, default="./data")
     parser.add_argument(
-        "-origin_dir", type=str, default="/mnt/md1/datasets/Nsynth"
-    )
-    parser.add_argument(
-        "-target_dir",
-        type=str,
-        default="/mnt/md1/user_victor/speechbrain/recipes/mu_vector",
+        "-target_dir", type=str, default="./data",
     )
 
     args = parser.parse_args()
