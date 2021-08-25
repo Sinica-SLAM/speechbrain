@@ -286,6 +286,34 @@ class SpeakerBrain(sb.core.Brain):
             mu_vector,
         )
 
+    def evaluate_batch(self, batch, stage):
+        """Evaluate one batch, override for different procedure than train.
+
+        The default implementation depends on two methods being defined
+        with a particular behavior:
+
+        * ``compute_forward()``
+        * ``compute_objectives()``
+
+        Arguments
+        ---------
+        batch : list of torch.Tensors
+            Batch of data to use for evaluation. Default implementation assumes
+            this batch has two elements: inputs and targets.
+        stage : Stage
+            The stage of the experiment: Stage.VALID, Stage.TEST
+
+        Returns
+        -------
+        detached loss
+        """
+
+        out = self.compute_forward(batch, stage=stage)
+        loss = self.compute_objectives(out, batch, stage=stage)
+        if isinstance(loss, dict):
+            loss = {key: value for key, value in loss.items()}
+        return loss
+
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss using speaker-id as label.
         """
@@ -351,7 +379,13 @@ class SpeakerBrain(sb.core.Brain):
         loss += l2_loss
         loss += l1_loss
 
-        return {"kl": kl, "l1": l1_loss, "l2": l2_loss}
+        return {
+            "id": id_loss,
+            "fam": family_loss,
+            "kl": kl,
+            "l1": l1_loss,
+            "l2": l2_loss,
+        }
 
     def on_stage_start(self, stage, epoch=None):
         """Gets called at the beginning of an epoch."""
