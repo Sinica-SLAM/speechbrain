@@ -361,16 +361,16 @@ def dataio_prepare(hparams):
         tokens = torch.LongTensor(tokens_list)
         yield tokens
 
-    @sb.utils.data_pipeline.takes("allosaurus")
+    @sb.utils.data_pipeline.takes("allosaurus_for_bpe")
     @sb.utils.data_pipeline.provides(
-        "allosaurus",
-        "allosaurus_list",
-        "allosaurus_tokens",
-        "allosaurus_group_id",
+        "allosaurus", "allosaurus_list", "allosaurus_tokens",
     )
     def allosaurus_text_pipeline(allosaurus):
-        allosaurus = allosaurus if len(allosaurus) > 0 else "<sil>"
         yield allosaurus
+        allosaurus_list = hparams["phone_tokenizer"].encode_as_ids(allosaurus)
+        yield allosaurus_list
+        tokens = torch.LongTensor(allosaurus_list)
+        yield tokens
 
     datasets = {}
     data_folder = hparams["data_folder"]
@@ -400,7 +400,6 @@ def dataio_prepare(hparams):
                 "allosaurus",
                 "allosaurus_list",
                 "allosaurus_tokens",
-                "allosaurus_group_id",
             ],
         )
 
@@ -428,7 +427,6 @@ def dataio_prepare(hparams):
                 "allosaurus",
                 "allosaurus_list",
                 "allosaurus_tokens",
-                "allosaurus_group_id",
             ],
         )
 
