@@ -385,7 +385,7 @@ class AlloST(TransformerASR):
         d_model=512,
         nhead=8,
         num_encoder_layers=6,
-        num_auxiliary_encoder_layers=12,
+        num_auxiliary_encoder_layers=6,
         num_decoder_layers=6,
         d_ffn=2048,
         dropout=0.1,
