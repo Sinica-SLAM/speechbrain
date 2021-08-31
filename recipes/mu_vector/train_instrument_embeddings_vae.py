@@ -347,7 +347,6 @@ class SpeakerBrain(sb.core.Brain):
             inst_family,
             lens,
         )
-        loss = id_loss + family_loss
 
         if hasattr(self.hparams.lr_annealing, "on_batch_end"):
             self.hparams.lr_annealing.on_batch_end(self.optimizer)
@@ -373,11 +372,16 @@ class SpeakerBrain(sb.core.Brain):
         )
         kl = torch.distributions.kl.kl_divergence(distq, distp)
         kl = kl.mean(axis=1).mean(axis=1).mean()
-        l2_loss = torch.sqrt(torch.mean((reconst_feats - feats) ** 2)) * 0.5
-        l1_loss = torch.mean(torch.abs(reconst_feats - feats)) * 0.5
-        loss += kl
-        loss += l2_loss
-        loss += l1_loss
+        l2_loss = (
+            self.hparams.reconst_alpha
+            * torch.sqrt(torch.mean((reconst_feats - feats) ** 2))
+            * 0.5
+        )
+        l1_loss = (
+            self.hparams.reconst_alpha
+            * torch.mean(torch.abs(reconst_feats - feats))
+            * 0.5
+        )
 
         return {
             "id": id_loss,
