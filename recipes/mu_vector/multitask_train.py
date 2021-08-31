@@ -7,11 +7,209 @@ import speechbrain as sb
 from speechbrain.utils.data_utils import download_file
 from hyperpyyaml import load_hyperpyyaml
 from speechbrain.utils.distributed import run_on_main
+from torch.utils.data import DataLoader
+from speechbrain.dataio.dataloader import LoopedLoader
+import time
+from tqdm import tqdm
 
 
 class SpeakerBrain(sb.core.Brain):
     """Class for speaker embedding training"
     """
+
+    def __init__(
+        self,
+        modules=None,
+        opt_class=None,
+        hparams=None,
+        run_opts=None,
+        checkpointer=None,
+    ):
+        super(SpeakerBrain, self).__init__(
+            modules=modules,
+            opt_class=opt_class,
+            hparams=hparams,
+            run_opts=run_opts,
+            checkpointer=checkpointer,
+        )
+        self.count = 0
+
+    def fit(
+        self,
+        epoch_counter,
+        train_set,
+        valid_set=None,
+        progressbar=None,
+        train_loader_kwargs={},
+        valid_loader_kwargs={},
+    ):
+        if not (
+            isinstance(train_set, DataLoader)
+            or isinstance(train_set, LoopedLoader)
+        ):
+            train_set = self.make_dataloader(
+                train_set, stage=sb.Stage.TRAIN, **train_loader_kwargs
+            )
+        if valid_set is not None and not (
+            isinstance(valid_set, DataLoader)
+            or isinstance(valid_set, LoopedLoader)
+        ):
+            valid_set = self.make_dataloader(
+                valid_set,
+                stage=sb.Stage.VALID,
+                ckpt_prefix=None,
+                **valid_loader_kwargs,
+            )
+
+        self.on_fit_start()
+
+        if progressbar is None:
+            progressbar = not self.noprogressbar
+
+        # Iterate epochs
+        for epoch in epoch_counter:
+
+            # Training stage
+            self.on_stage_start(sb.Stage.TRAIN, epoch)
+            self.modules.train()
+
+            # Reset nonfinite count to 0 each epoch
+            self.nonfinite_count = 0
+
+            if self.train_sampler is not None and hasattr(
+                self.train_sampler, "set_epoch"
+            ):
+                self.train_sampler.set_epoch(epoch)
+
+            # Time since last intra-epoch checkpoint
+            last_ckpt_time = time.time()
+
+            # Only show progressbar if requested and main_process
+            enable = progressbar and sb.utils.distributed.if_main_process()
+            with tqdm(
+                train_set,
+                initial=self.step,
+                dynamic_ncols=True,
+                disable=not enable,
+            ) as t:
+                for batch in t:
+                    self.step += 1
+                    loss = self.fit_batch(batch)
+                    self.avg_train_loss = self.update_average(
+                        loss, self.avg_train_loss
+                    )
+                    t.set_postfix(**self.avg_train_loss)
+
+                    # Debug mode only runs a few batches
+                    if self.debug and self.step == self.debug_batches:
+                        break
+
+                    if (
+                        self.checkpointer is not None
+                        and self.ckpt_interval_minutes > 0
+                        and time.time() - last_ckpt_time
+                        >= self.ckpt_interval_minutes * 60.0
+                    ):
+                        run_on_main(self._save_intra_epoch_ckpt)
+                        last_ckpt_time = time.time()
+
+            # Run train "on_stage_end" on all processes
+            self.on_stage_end(sb.Stage.TRAIN, self.avg_train_loss, epoch)
+            self.avg_train_loss = 0.0
+            self.step = 0
+
+            # Validation stage
+            if valid_set is not None:
+                self.on_stage_start(sb.Stage.VALID, epoch)
+                self.modules.eval()
+                avg_valid_loss = 0.0
+                with torch.no_grad():
+                    for batch in tqdm(
+                        valid_set, dynamic_ncols=True, disable=not enable
+                    ):
+                        self.step += 1
+                        loss = self.evaluate_batch(batch, stage=sb.Stage.VALID)
+                        avg_valid_loss = self.update_average(
+                            loss, avg_valid_loss
+                        )
+
+                        # Debug mode only runs a few batches
+                        if self.debug and self.step == self.debug_batches:
+                            break
+
+                    # Only run validation "on_stage_end" on main process
+                    self.step = 0
+                    run_on_main(
+                        self.on_stage_end,
+                        args=[sb.Stage.VALID, avg_valid_loss, epoch],
+                    )
+
+            # Debug mode only runs a few epochs
+            if self.debug and epoch == self.debug_epochs:
+                break
+
+    def fit_batch(self, batch):
+        if self.count % self.hparams.accum_grad_count == 0:
+            self.optimizer.zero_grad()
+
+        if self.auto_mix_prec:
+            with torch.cuda.amp.autocast():
+                outputs = self.compute_forward(batch, sb.Stage.TRAIN)
+                loss = self.compute_objectives(outputs, batch, sb.Stage.TRAIN)
+            self.scaler.scale(loss).backward()
+            self.scaler.unscale_(self.optimizer)
+            if self.check_gradients(loss):
+                self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            outputs = self.compute_forward(batch, sb.Stage.TRAIN)
+            loss = self.compute_objectives(outputs, batch, sb.Stage.TRAIN)
+            if isinstance(loss, dict):
+                sum_loss = sum((loss.values()))
+            else:
+                sum_loss = loss
+            self.count += 1
+            sum_loss.backward()
+            if (
+                self.check_gradients(sum_loss)
+                and self.count % self.hparams.accum_grad_count == 0
+            ):
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+                self.count = 0
+
+        if isinstance(loss, dict):
+            for key in loss.keys():
+                loss[key] = loss[key].detach().cpu()
+        return loss
+
+    def update_average(self, loss, avg_loss):
+        """Update running average of the loss.
+        Arguments
+        ---------
+        loss : torch.tensor
+            detached loss, a single float value.
+        avg_loss : float
+            current running average.
+        Returns
+        -------
+        avg_loss : float
+            The average loss.
+        """
+        if isinstance(loss, dict):
+            if avg_loss == 0:
+                avg_loss = loss.copy()
+                for key in loss.keys():
+                    avg_loss[key] /= self.step
+            else:
+                for key in loss.keys():
+                    avg_loss[key] -= avg_loss[key] / self.step
+                    avg_loss[key] += float(loss[key]) / self.step
+        else:
+            if torch.isfinite(loss):
+                avg_loss -= avg_loss / self.step
+                avg_loss += float(loss) / self.step
+        return avg_loss
 
     def compute_forward(self, batch, stage):
         """Computation pipeline based on a encoder + speaker classifier.
@@ -59,6 +257,30 @@ class SpeakerBrain(sb.core.Brain):
 
         return outputs, lens
 
+    def evaluate_batch(self, batch, stage):
+        """Evaluate one batch, override for different procedure than train.
+        The default implementation depends on two methods being defined
+        with a particular behavior:
+        * ``compute_forward()``
+        * ``compute_objectives()``
+        Arguments
+        ---------
+        batch : list of torch.Tensors
+            Batch of data to use for evaluation. Default implementation assumes
+            this batch has two elements: inputs and targets.
+        stage : Stage
+            The stage of the experiment: Stage.VALID, Stage.TEST
+        Returns
+        -------
+        detached loss
+        """
+
+        out = self.compute_forward(batch, stage=stage)
+        loss = self.compute_objectives(out, batch, stage=stage)
+        if isinstance(loss, dict):
+            loss = {key: value for key, value in loss.items()}
+        return loss
+
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss using speaker-id as label.
         """
@@ -83,7 +305,6 @@ class SpeakerBrain(sb.core.Brain):
             inst_family,
             lens,
         )
-        loss = id_loss + family_loss
 
         if hasattr(self.hparams.lr_annealing, "on_batch_end"):
             self.hparams.lr_annealing.on_batch_end(self.optimizer)
@@ -100,7 +321,10 @@ class SpeakerBrain(sb.core.Brain):
                 inst_family,
             )
 
-        return loss
+        return {
+            "id": id_loss,
+            "fam": self.hparams.family_weight * family_loss,
+        }
 
     def on_stage_start(self, stage, epoch=None):
         """Gets called at the beginning of an epoch."""
@@ -318,5 +542,7 @@ if __name__ == "__main__":
 
     # Identification test
     speaker_brain.evaluate(
-        test_set=test_data, test_loader_kwargs=hparams["dataloader_options"],
+        test_set=test_data,
+        min_key="ErrorRate",
+        test_loader_kwargs=hparams["dataloader_options"],
     )

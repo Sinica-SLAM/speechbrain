@@ -6,7 +6,7 @@
 # Basic parameters
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/ecapa_instrument/<seed>
+output_folder: !ref results/ecapa_baselilne/<seed>
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
@@ -16,9 +16,9 @@ train_annotation: !ref <save_folder>/train.csv
 valid_annotation: !ref <save_folder>/dev.csv
 test_annotation: !ref <save_folder>/test.csv
 
-meta_train: data/meta/train.json
-meta_valid: data/meta/valid.json
-meta_test: data/meta/test.json
+meta_train: !ref <data_folder>/meta/train.json
+meta_valid: !ref <data_folder>/meta/valid.json
+meta_test: !ref <data_folder>/meta/test.json
 
 # Folder to extract data augmentation files
 rir_folder: !ref <data_folder> # Change it if needed
@@ -36,8 +36,9 @@ skip_prep: False
 ckpt_interval_minutes: 15 # save checkpoint every N min
 
 # Training parameters
-number_of_epochs: 10
-batch_size: 8
+number_of_epochs: 20
+batch_size: 32
+accum_grad_count: 2
 lr: 0.001
 base_lr: 0.00000001
 max_lr: !ref <lr>
@@ -45,7 +46,9 @@ step_size: 65000
 sample_rate: 16000
 sentence_len: 3.0 # seconds
 shuffle: True
-random_chunk: True
+# random_chunk: True
+random_chunk: False
+family_weight: 8
 
 # Feature parameters
 n_mels: 80
@@ -73,10 +76,12 @@ compute_features: !new:speechbrain.lobes.features.Fbank
 
 embedding_model: !new:speechbrain.lobes.models.ECAPA_TDNN.ECAPA_TDNN
     input_size: !ref <n_mels>
-    channels: [1024, 1024, 1024, 1024, 3072]
+    # channels: [1024, 1024, 1024, 1024, 3072]
+    channels: [512, 512, 512, 512, 1536]
     kernel_sizes: [5, 3, 3, 3, 1]
     dilations: [1, 2, 3, 4, 1]
-    attention_channels: 128
+    # attention_channels: 128
+    attention_channels: 64
     lin_neurons: 192
 
 classifier: !new:speechbrain.lobes.models.ECAPA_TDNN.Classifier
@@ -130,10 +135,10 @@ add_rev_noise: !new:speechbrain.lobes.augment.EnvCorrupt
 
 augment_pipeline: [
     !ref <augment_wavedrop>,
-    !ref <augment_speed>,
-    !ref <add_rev>,
-    !ref <add_noise>,
-    !ref <add_rev_noise>
+    # !ref <augment_speed>,
+    # !ref <add_rev>,
+    # !ref <add_noise>,
+    # !ref <add_rev_noise>
 ]
 concat_augment: True
 
@@ -156,6 +161,8 @@ compute_cost: !new:speechbrain.nnet.losses.LogSoftmaxWrapper
     loss_fn: !new:speechbrain.nnet.losses.AdditiveAngularMargin
         margin: 0.2
         scale: 30
+
+compute_loss: !name:speechbrain.nnet.losses.nll_loss
 
 compute_error: !name:speechbrain.nnet.losses.classification_error
 
