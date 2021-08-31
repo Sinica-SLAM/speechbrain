@@ -80,6 +80,7 @@ embedding_model: !new:speechbrain.lobes.models.ECAPA_TDNN_RECONST_VAE.ECAPA_TDNN
     attention_channels: 128
     lin_neurons: 192
     reconst_layer: 3
+    sap: True
 
 classifier: !new:speechbrain.lobes.models.ECAPA_TDNN_RECONST_VAE.Classifier
     input_size: 192

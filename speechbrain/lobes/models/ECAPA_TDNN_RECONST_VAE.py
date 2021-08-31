@@ -15,6 +15,30 @@ from speechbrain.nnet.linear import Linear
 from math import floor
 
 
+class SelfAttentionPooling(nn.Module):
+    def __init__(self, input_dim, sap_dim=None):
+        super(SelfAttentionPooling, self).__init__()
+
+        if sap_dim is None:
+            sap_dim = input_dim
+
+        self.mlp = nn.Conv1d(
+            input_dim, sap_dim, kernel_size=1, stride=1, padding=0, bias=True
+        )
+
+        self.mu = nn.Conv1d(
+            sap_dim, 1, kernel_size=1, stride=1, padding=0, bias=False
+        )
+
+        self.softmax = nn.Softmax(dim=-1)
+
+    def forward(self, x, lengths=None):
+        h = torch.tanh(self.mlp(x))
+        w = self.softmax(self.mu(h))
+        e = (x * w).sum(dim=-1, keepdim=True)
+        return e
+
+
 # Skip transpose as much as possible for efficiency
 class Conv1d(_Conv1d):
     def __init__(self, *args, **kwargs):
@@ -268,7 +292,6 @@ class AttentiveStatisticsPooling(nn.Module):
         # Append mean and std of the batch
         pooled_stats = torch.cat((mean, std), dim=1)
         pooled_stats = pooled_stats.unsqueeze(2)
-
         return pooled_stats
 
 
@@ -399,6 +422,7 @@ class ECAPA_TDNN(torch.nn.Module):
         se_channels=128,
         global_context=True,
         reconst_layer=1,
+        sap=None,
     ):
 
         super().__init__()
@@ -455,20 +479,33 @@ class ECAPA_TDNN(torch.nn.Module):
             activation,
         )
 
-        # Attentive Statistical Pooling
-        self.asp = AttentiveStatisticsPooling(
-            channels[-1],
-            attention_channels=attention_channels,
-            global_context=global_context,
-        )
-        self.asp_bn = BatchNorm1d(input_size=channels[-1] * 2)
+        if sap:
+            self.pooling = SelfAttentionPooling(
+                channels[-1], sap_dim=channels[-1] * 2
+            )
+            self.asp_bn = BatchNorm1d(input_size=channels[-1])
 
-        # Final linear transformation
-        self.fc = Conv1d(
-            in_channels=channels[-1] * 2,
-            out_channels=lin_neurons,
-            kernel_size=1,
-        )
+            # Final linear transformation
+            self.fc = Conv1d(
+                in_channels=channels[-1],
+                out_channels=lin_neurons,
+                kernel_size=1,
+            )
+        else:
+            # Attentive Statistical Pooling
+            self.pooling = AttentiveStatisticsPooling(
+                channels[-1],
+                attention_channels=attention_channels,
+                global_context=global_context,
+            )
+            self.asp_bn = BatchNorm1d(input_size=channels[-1] * 2)
+
+            # Final linear transformation
+            self.fc = Conv1d(
+                in_channels=channels[-1] * 2,
+                out_channels=lin_neurons,
+                kernel_size=1,
+            )
 
     def forward(self, x, lengths=None):
         """Returns the embedding vector.
@@ -500,7 +537,7 @@ class ECAPA_TDNN(torch.nn.Module):
         x = self.mfa(x)
 
         # Attentive Statistical Pooling
-        x = self.asp(x, lengths=lengths)
+        x = self.pooling(x, lengths=lengths)
         x = self.asp_bn(x)
 
         # Final linear transformation
