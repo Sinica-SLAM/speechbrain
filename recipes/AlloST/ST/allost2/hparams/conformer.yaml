@@ -13,7 +13,7 @@ debug: False
 seed: 8886
 num_workers: 8
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/conformer/<seed>
+output_folder: !ref results/allost_160_encoder_fusion/<seed>
 ckpt_interval_minutes: 15 # save checkpoint every N min
 bleu_file: !ref <output_folder>/bleu.txt
 save_folder: !ref <output_folder>/save
@@ -133,7 +133,8 @@ test_beam_size: 10
 # sum them up would come up with 5 different ways of tokenization
 blocks_size: 6
 embedding_size: 256
-dictionary_size: 138 # 136 (phone labels) + 1 (pad) + 1 (sil)
+dictionary_size: 140 # 136 (phone labels) + 4 (<pad>/<sil>/<s>/</s>)
+global_scores_weight: 0
 
 ############################## models ################################
 CNN: !new:speechbrain.lobes.models.convolution.ConvolutionFrontEnd
@@ -150,6 +151,7 @@ GBST: !new:speechbrain.lobes.models.GBST.GBST
     dictionary_size: !ref <dictionary_size>
     blocks_size: !ref <blocks_size>
     pad_index: !ref <pad_index>
+    global_scores_weight: !ref <global_scores_weight>
 
 AlloST: !new:speechbrain.lobes.models.transformer.AlloST.AlloST # yamllint disable-line rule:line-length
     input_size: 5120
