@@ -18,6 +18,7 @@ token_output: 1000
 # translation_0: translation in target language
 # transcription_and_translation: joint transcription and translation
 annotation_read: "translation_0" # field to read
+phone_type: "normal"
 
 # Tokenizer object
 tokenizer: !name:speechbrain.tokenizers.SentencePiece.SentencePiece

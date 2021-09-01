@@ -126,15 +126,20 @@ def find_all_possible_vocabs(
                     )
     # Put possible vocabs togather
     results = [[] for _ in range(len(paths))]
+    scores = [[] for _ in range(len(paths))]
+    default_score = 0
     sequence_index = [i for i in range(sequence_length)]
 
     for index, path in enumerate(paths):
         for symbol in path:
+            vocab_length = len(symbol[0].split(" "))
             results[index].append(symbol[0])
+            scores[index] += [symbol[1]] * vocab_length
 
         phone_index = list(
             map(lambda p: [i for i in range(p[2], p[3] + 1)], path)
         )
+
         phone_index = [index for vocab in phone_index for index in vocab]
 
         pad_indices = set(sequence_index) - set(phone_index)
@@ -142,6 +147,7 @@ def find_all_possible_vocabs(
 
         for pad_index in pad_indices:
             results[index].insert(pad_index, phone_symbols[pad_index])
+            scores[index].insert(pad_index, default_score)
 
     possible_path_number = sum([i for i in range(2, order + 1)])
 
@@ -149,12 +155,13 @@ def find_all_possible_vocabs(
     if len(results) < possible_path_number:
         not_enough_number = possible_path_number - len(results)
         for _ in range(not_enough_number):
-            results.append(phone_symbols.copy())
+            results.append("<pad>")
+            scores.append([default_score] * sequence_length)
 
-    return results
+    return results, scores
 
 
-def ngram2group_index(sequence: List[str]) -> List[int]:
+def ngram2group_index(sequence: List[str], pad_index: int = 0) -> List[int]:
     """Make the vocab with the same index in original sequence
 
     Example:
@@ -169,17 +176,24 @@ def ngram2group_index(sequence: List[str]) -> List[int]:
     group_index = 1
 
     for ngram in ngrams:
-        group_indexs += [group_index] * ngram
-        group_index += 1
+        if ngram > 1:
+            group_indexs += [group_index] * ngram
+            group_index += 1
+        else:
+            group_indexs += [pad_index]
 
     return group_indexs
 
 
 def sequence2group_index(
-    sequence: str, ngram_scores: str, order: int = 3, threshold: float = -2,
+    sequence: str,
+    ngram_scores: str,
+    order: int = 3,
+    threshold: float = -2,
+    pad_index: int = 0,
 ) -> List[List[int]]:
     """Map the given sequence to group id"""
-    vocabs = find_all_possible_vocabs(
+    vocabs, _ = find_all_possible_vocabs(
         sequence=sequence,
         ngram_scores=ngram_scores,
         order=order,
@@ -188,7 +202,44 @@ def sequence2group_index(
 
     group = []
     for vocab in vocabs:
-        index = ngram2group_index(vocab)
-        group.append(index)
+        if vocab == "<pad>":
+            # Pad sequences with all zeros when segmentations are not enough
+            group.append([pad_index] * len(sequence.split(" ")))
+        else:
+            index = ngram2group_index(vocab, pad_index=pad_index)
+            group.append(index)
 
     return group
+
+
+def sequence2scores(
+    sequence: str,
+    ngram_scores: str,
+    order: int = 3,
+    threshold: float = -2,
+    pad_index: int = 0,
+):
+    """Map the given sequence to scores"""
+    _, scores = find_all_possible_vocabs(
+        sequence=sequence,
+        ngram_scores=ngram_scores,
+        order=order,
+        threshold=threshold,
+    )
+
+    unigram_score = []
+    for symbol in sequence.split(" "):
+        score = ngram_scores.get(symbol, pad_index)
+        unigram_score.append(score)
+
+    return [unigram_score] + scores
+
+
+if __name__ == "__main__":
+    sequence = "ɒ ʝ a iː o"
+    # sequence = "b̞ uə e l ɪ s a l̪ ɪ s"
+    ngram_scores = read_arpa("../../LM/save/lm.arpa")
+
+    scores = sequence2group_index(sequence=sequence, ngram_scores=ngram_scores)
+    print(sequence)
+    print(scores)

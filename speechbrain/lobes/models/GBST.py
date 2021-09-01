@@ -4,6 +4,7 @@ Authors
 * YAO FEI, CHENG 2021
 """
 
+from typing import Optional
 import torch
 import logging
 import torch.nn.functional as F
@@ -22,6 +23,7 @@ class GBST(nn.Module):
         dictionary_size: int,
         blocks_size: int,
         pad_index: int = 0,
+        global_scores_weight: float = 0.0,
     ):
         super().__init__()
 
@@ -32,9 +34,17 @@ class GBST(nn.Module):
 
         self.blocks_size = blocks_size
         self.pad_index = pad_index
+        self.global_scores_weight = global_scores_weight
+        if self.global_scores_weight > 0:
+            self.global_score_function = nn.Sequential(
+                nn.Linear(self.blocks_size, self.blocks_size), nn.ReLU(),
+            )
 
     def forward(
-        self, sequence: torch.LongTensor, group_id: torch.LongTensor,
+        self,
+        sequence: torch.LongTensor,
+        group_id: torch.LongTensor,
+        global_scores: Optional[torch.FloatTensor] = None,
     ):
         # Calculate character embedding
         embed_sequence = self.character_embedding(sequence)
@@ -55,14 +65,20 @@ class GBST(nn.Module):
             # Calculate mean for each vocab
             # it returns [batch, longest_length_among_the_batch, dimension]
             # original sequence lengths will be subsampled to longest_length_among_the_batch
-            blocked_sequence = scatter_mean(
-                embed_sequence.detach().clone(), group_id_in_layer, dim=1
+            embed_sequence_in_layer = embed_sequence.detach().clone()
+
+            # Mask out zeros since they are not the vocabs
+            sequence_in_layer_mask = (
+                group_id_in_layer.unsqueeze(-1)
+                .eq(self.pad_index)
+                .to(sequence.device)
+            )
+            embed_sequence_in_layer = embed_sequence_in_layer.masked_fill(
+                sequence_in_layer_mask, 0
             )
 
-            group_frequencies = []
-            # Calculate frequencies for each group
-            # As mention above, the original sequence was subsampled
-            # Upsample them by the length of vocabs
+            # Since scatter mean will index from 0
+            # So, shift index by 1
             for batch in range(len(pad_group_id)):
                 # Replac the pad index to group id
                 group_id_in_layer_in_batch = group_id_in_layer[batch]
@@ -70,25 +86,34 @@ class GBST(nn.Module):
                     group_id_in_layer_in_batch == self.pad_index
                 ] = pad_group_id[batch]
                 group_id_in_layer_in_batch = group_id_in_layer_in_batch - 1
+                group_id_in_layer[batch] = group_id_in_layer_in_batch
 
+            blocked_sequence = scatter_mean(
+                embed_sequence_in_layer, group_id_in_layer, dim=1
+            )
+
+            # Calculate frequencies for each group
+            # As mention above, the original sequence was subsampled
+            # Upsample them by the length of vocabs
+            # Since bincount doesn't support batch-wise operation
+            # So, loop over the batch
+            block_representation = []
+            for batch in range(len(group_id_in_layer)):
                 # Calculate frequencies based on the length of vocabs
-                group_frequency = torch.bincount(group_id_in_layer_in_batch)
+                group_frequency = torch.bincount(group_id_in_layer[batch])
                 block_sequence_length = blocked_sequence.shape[1]
                 pad_length = block_sequence_length - group_frequency.shape[0]
                 # Pad upsampled sequences to original lengths
                 group_frequency = F.pad(
                     group_frequency, pad=(0, pad_length), value=self.pad_index
                 )
-                group_frequencies.append(group_frequency)
+                block_sequence_in_batch = torch.repeat_interleave(
+                    blocked_sequence[batch], group_frequency, dim=0
+                )
+                block_representation.append(block_sequence_in_batch)
 
-            # Batch-wise group frequencies
-            group_frequencies = torch.stack(group_frequencies)
-
-            # Upsample based on frequency
-            blocked_sequence = torch.repeat_interleave(
-                blocked_sequence, group_frequency, dim=1
-            )
-            block_representations.append(blocked_sequence)
+            block_representation = torch.stack(block_representation)
+            block_representations.append(block_representation)
 
         block_representations = torch.stack(block_representations, dim=2)
 
@@ -106,6 +131,23 @@ class GBST(nn.Module):
         scores = scores.masked_fill(blocks_mask, max_neg_value)
         scores = scores.softmax(dim=2)
         scores = scores.unsqueeze(-1)
+
+        # Fuse the global scores with weight
+        if self.global_scores_weight > 0:
+            global_scores = global_scores.permute(0, 2, 1)
+            global_scores_mask = global_scores.eq(self.pad_index).to(
+                sequence.device
+            )
+            global_scores = self.global_score_function(global_scores)
+            global_scores = global_scores.masked_fill(
+                global_scores_mask, max_neg_value
+            )
+            global_scores = global_scores.softmax(dim=2)
+            global_scores = global_scores.unsqueeze(-1)
+            scores = (
+                scores * (1 - self.global_scores_weight)
+                + self.global_scores_weight * global_scores
+            )
 
         # Weighted sum over block representations
         embed_sequence = torch.mul(block_representations, scores).sum(dim=2)

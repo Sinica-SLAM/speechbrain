@@ -85,7 +85,6 @@ def recognize_all_phone(
     # recognize phone labels
     for wav_id in tqdm(wav_ids):
         phone = ALLOSAURUS.recognize(f"{phone_folder}/wav/{wav_id}.wav")
-        phone = "<sil>" if len(phone) == 0 else phone
 
         if phone_type == "sequence":
             phone_sequence = phone.split(" ")
@@ -96,12 +95,11 @@ def recognize_all_phone(
     # since some of phone sequence are composed in two labels
     if phone_type == "sequence":
         base = ord("\U00013000")
-        phone_lexicon.remove("")
         phone_lexicon = sorted(phone_lexicon)
         phone_lexicon = list(phone_lexicon)
 
         for wav_id in tqdm(wav_ids):
-            original_phone = data_json[wav_ids]["allosaurus"]
+            original_phone = data_json[wav_id]["allosaurus"]
             sequenced_phone = []
 
             for phone in original_phone.split(" "):
@@ -110,7 +108,7 @@ def recognize_all_phone(
                 sequenced_phone.append(label)
 
             sequenced_phone = "".join(label)
-            data_json[wav_ids]["allosaurus_for_bpe"] = sequenced_phone
+            data_json[wav_id]["allosaurus_for_bpe"] = sequenced_phone
 
     return data_json
 

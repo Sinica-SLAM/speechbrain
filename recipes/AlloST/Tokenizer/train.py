@@ -42,7 +42,9 @@ if __name__ == "__main__":
     )
 
     # Update the existing data json with phone sequences
-    prepare_allosaurus(save_folder=hparams["data_folder"],)
+    prepare_allosaurus(
+        save_folder=hparams["data_folder"], phone_type=hparams["phone_type"]
+    )
 
     # Train tokenizer
     hparams["tokenizer"]()

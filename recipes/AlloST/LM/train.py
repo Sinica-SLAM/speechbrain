@@ -38,7 +38,6 @@ def create_lexicon(train_text_path: str, lexicon_path: str):
             lexicon += train_text_line.strip().split(" ")
 
         lexicon = set(lexicon)
-        lexicon.remove("")
         lexicon = sorted(lexicon)
 
         lexicon_file.write("\n".join(lexicon))

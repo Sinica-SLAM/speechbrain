@@ -15,7 +15,11 @@ from sacremoses import MosesDetokenizer
 
 from hyperpyyaml import load_hyperpyyaml
 from speechbrain.utils.distributed import run_on_main
-from arpa_reader import read_arpa, sequence2group_index
+from arpa_reader import (
+    read_arpa,
+    sequence2group_index,
+    sequence2scores,
+)
 
 logger = logging.getLogger(__name__)
 en_detoeknizer = MosesDetokenizer(lang="en")
@@ -31,6 +35,7 @@ class ST(sb.core.Brain):
 
         allosaurus_tokens, _ = batch.allosaurus_tokens
         allosaurus_group_id, _ = batch.allosaurus_group_id
+        allosaurus_global_scores, _ = batch.allosaurus_scores
 
         # compute features
         feats = self.hparams.compute_features(wavs)
@@ -41,7 +46,7 @@ class ST(sb.core.Brain):
 
         # perform GBST before feed into the translation model
         embed_phone_sequence = self.modules.GBST(
-            allosaurus_tokens, allosaurus_group_id
+            allosaurus_tokens, allosaurus_group_id, allosaurus_global_scores
         )
         src = self.modules.CNN(feats)
 
@@ -377,9 +382,11 @@ def dataio_prepare(hparams):
         "allosaurus_list",
         "allosaurus_tokens",
         "allosaurus_group_id",
+        "allosaurus_scores",
     )
     def allosaurus_text_pipeline(allosaurus):
         allosaurus = allosaurus if len(allosaurus) > 0 else "<sil>"
+        allosaurus = f"<s> {allosaurus} </s>"
         yield allosaurus
         tokens_list = list(
             map(lambda phone: phone_dictionary[phone], allosaurus.split(" "))
@@ -394,6 +401,13 @@ def dataio_prepare(hparams):
             threshold=hparams["threshold"],
         )
         yield torch.LongTensor(group_id)
+        scores = sequence2scores(
+            sequence=allosaurus,
+            ngram_scores=ngram_scores,
+            order=hparams["order"],
+            threshold=hparams["threshold"],
+        )
+        yield torch.FloatTensor(scores)
 
     datasets = {}
     data_folder = hparams["data_folder"]
@@ -424,6 +438,7 @@ def dataio_prepare(hparams):
                 "allosaurus_list",
                 "allosaurus_tokens",
                 "allosaurus_group_id",
+                "allosaurus_scores",
             ],
         )
 
@@ -452,6 +467,7 @@ def dataio_prepare(hparams):
                 "allosaurus_list",
                 "allosaurus_tokens",
                 "allosaurus_group_id",
+                "allosaurus_scores",
             ],
         )
 
@@ -537,6 +553,8 @@ def build_phone_dictionary(hparams):
 
         phone_symbols.insert(hparams["pad_index"], "<pad>")
         phone_symbols.insert(hparams["sil_index"], "<sil>")
+        phone_symbols.insert(hparams["bos_index"], "<s>")
+        phone_symbols.insert(hparams["eos_index"], "</s>")
 
         for index, phone_symbol in enumerate(phone_symbols):
             phone_symbol = phone_symbol.strip()
@@ -586,8 +604,8 @@ if __name__ == "__main__":
         valid_loader_kwargs=hparams["valid_dataloader_opts"],
     )
 
-    for dataset in ["dev", "dev2", "test"][0:1]:
-        st_brain.evaluate(
-            datasets[dataset],
-            test_loader_kwargs=hparams["test_dataloader_opts"],
-        )
+    # for dataset in ["dev", "dev2", "test"]:
+    #     st_brain.evaluate(
+    #         datasets[dataset],
+    #         test_loader_kwargs=hparams["test_dataloader_opts"],
+    #     )
