@@ -17,7 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 class DepthwiseConv1d(nn.Module):
-    def __init__(self, dim_in, dim_out, kernel_size, bias=False):
+    def __init__(
+        self, dim_in: int, dim_out: int, kernel_size: int, bias: bool = True
+    ):
         super().__init__()
         self.conv = nn.Conv1d(
             dim_in, dim_out, kernel_size, groups=dim_in, bias=bias
@@ -64,6 +66,11 @@ class GBST(nn.Module):
     ):
         # Calculate character embedding
         embed_sequence = self.character_embedding(sequence)
+
+        # Calculate sequence masks
+        sequence_mask = (
+            sequence.eq(self.pad_index).unsqueeze(-1).to(sequence.device)
+        )
         blocks_mask = torch.cat((sequence.unsqueeze(1), group_id), dim=1)
 
         # Calculate positions for each token
@@ -76,6 +83,9 @@ class GBST(nn.Module):
         embed_sequence = embed_sequence.permute(0, 2, 1)
         embed_sequence = self.pos_conv(embed_sequence)
         embed_sequence = embed_sequence.permute(0, 2, 1)
+
+        # Mask out padding with 0 embedding
+        embed_sequence = embed_sequence.masked_fill(sequence_mask, 0)
 
         # Calculate the index frequency
         pad_group_ids, _ = torch.max(group_id, dim=2)
@@ -148,12 +158,10 @@ class GBST(nn.Module):
         scores = self.score_function(block_representations)
         scores = scores.squeeze(-1)
 
-        # Calculate sequence masks
+        # Maske out padded tokens
         blocks_mask = (
             blocks_mask.permute(0, 2, 1).eq(self.pad_index).to(sequence.device)
         )
-
-        # Maske out padded tokens
         max_neg_value = -torch.finfo(scores.dtype).max
         scores = scores.masked_fill(blocks_mask, max_neg_value)
         scores = scores.softmax(dim=2)

@@ -13,7 +13,7 @@ debug: False
 seed: 8886
 num_workers: 8
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/allost/<seed>
+output_folder: !ref results/allost_mid/<seed>
 ckpt_interval_minutes: 15 # save checkpoint every N min
 bleu_file: !ref <output_folder>/bleu.txt
 save_folder: !ref <output_folder>/save
@@ -135,9 +135,9 @@ test_beam_size: 10
 # first, second or third word in a trigram token
 # sum them up would come up with 5 different ways of tokenization
 blocks_size: 6
-embedding_size: 1
+embedding_size: 256
 dictionary_size: 140 # 136 (phone labels) + 4 (<pad>/<sil>/<s>/</s>)
-global_scores_weight: 0.3
+global_scores_weight: 0
 
 ############################## models ################################
 CNN: !new:speechbrain.lobes.models.convolution.ConvolutionFrontEnd
