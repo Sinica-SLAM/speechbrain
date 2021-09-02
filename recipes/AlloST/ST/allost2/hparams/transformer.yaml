@@ -128,13 +128,7 @@ valid_beam_size: 10
 test_beam_size: 10
 
 # GBST
-# 1 (unigram) + 5 (different ways of tokenization)
-# it dependes on the n of n-grams
-# n = 3, it got 5 different possible in a token
-# it could be, the first or second word in a bigram token
-# first, second or third word in a trigram token
-# sum them up would come up with 5 different ways of tokenization
-blocks_size: 6
+ngrams: 3
 embedding_size: 256
 dictionary_size: 140 # 136 (phone labels) + 4 (<pad>/<sil>/<s>/</s>)
 global_scores_weight: 0
@@ -152,7 +146,7 @@ CNN: !new:speechbrain.lobes.models.convolution.ConvolutionFrontEnd
 GBST: !new:speechbrain.lobes.models.GBST.GBST
     embedding_size: !ref <embedding_size>
     dictionary_size: !ref <dictionary_size>
-    blocks_size: !ref <blocks_size>
+    ngrams: !ref <ngrams>
     pad_index: !ref <pad_index>
     global_scores_weight: !ref <global_scores_weight>
 

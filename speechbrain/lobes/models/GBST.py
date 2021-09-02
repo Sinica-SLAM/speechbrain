@@ -36,7 +36,7 @@ class GBST(nn.Module):
         self,
         embedding_size: int,
         dictionary_size: int,
-        blocks_size: int,
+        ngrams: int,
         pad_index: int = 0,
         global_scores_weight: float = 0.0,
     ):
@@ -46,11 +46,10 @@ class GBST(nn.Module):
             dictionary_size, embedding_size, padding_idx=pad_index
         )
         self.score_function = nn.Linear(embedding_size, 1)
-        self.pos_conv = DepthwiseConv1d(
-            embedding_size, embedding_size, blocks_size
-        )
+        self.pos_conv = DepthwiseConv1d(embedding_size, embedding_size, ngrams)
 
-        self.blocks_size = blocks_size
+        self.ngrams = ngrams
+        self.blocks_size = sum([i for i in range(1, ngrams + 1)])
         self.pad_index = pad_index
         self.global_scores_weight = global_scores_weight
         if self.global_scores_weight > 0:
@@ -76,7 +75,7 @@ class GBST(nn.Module):
         # Calculate positions for each token
         embed_sequence = F.pad(
             embed_sequence,
-            pad=(0, 0, 0, self.blocks_size - 1),
+            pad=(0, 0, 0, self.ngrams - 1),
             value=self.pad_index,
         )
 
