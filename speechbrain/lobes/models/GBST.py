@@ -16,6 +16,19 @@ from speechbrain.utils.scatter_mean import scatter_mean
 logger = logging.getLogger(__name__)
 
 
+class DepthwiseConv1d(nn.Module):
+    def __init__(self, dim_in, dim_out, kernel_size, bias=False):
+        super().__init__()
+        self.conv = nn.Conv1d(
+            dim_in, dim_out, kernel_size, groups=dim_in, bias=bias
+        )
+        self.proj_out = nn.Conv1d(dim_out, dim_out, 1, bias=bias)
+
+    def forward(self, x):
+        x = self.conv(x)
+        return self.proj_out(x)
+
+
 class GBST(nn.Module):
     def __init__(
         self,
@@ -31,6 +44,9 @@ class GBST(nn.Module):
             dictionary_size, embedding_size, padding_idx=pad_index
         )
         self.score_function = nn.Linear(embedding_size, 1)
+        self.pos_conv = DepthwiseConv1d(
+            embedding_size, embedding_size, blocks_size
+        )
 
         self.blocks_size = blocks_size
         self.pad_index = pad_index
@@ -49,6 +65,17 @@ class GBST(nn.Module):
         # Calculate character embedding
         embed_sequence = self.character_embedding(sequence)
         blocks_mask = torch.cat((sequence.unsqueeze(1), group_id), dim=1)
+
+        # Calculate positions for each token
+        embed_sequence = F.pad(
+            embed_sequence,
+            pad=(0, 0, 0, self.blocks_size - 1),
+            value=self.pad_index,
+        )
+
+        embed_sequence = embed_sequence.permute(0, 2, 1)
+        embed_sequence = self.pos_conv(embed_sequence)
+        embed_sequence = embed_sequence.permute(0, 2, 1)
 
         # Calculate the index frequency
         pad_group_ids, _ = torch.max(group_id, dim=2)

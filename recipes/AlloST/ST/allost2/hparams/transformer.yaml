@@ -13,7 +13,7 @@ debug: False
 seed: 8886
 num_workers: 8
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/allost_160_encoder_fusion/<seed>
+output_folder: !ref results/allost/<seed>
 ckpt_interval_minutes: 15 # save checkpoint every N min
 bleu_file: !ref <output_folder>/bleu.txt
 save_folder: !ref <output_folder>/save
@@ -24,6 +24,11 @@ data_folder: /mnt/md1/user_jamfly/sb_data/Fisher_data #!PLACEHOLDER # Folder of 
 tokenizer_file: ../../Tokenizer/save/1000_bpe.model # !PLACEHOLDER # .model file corresponding to the Tokenizer model
 arpa_lm_file: ../../LM/save/lm.arpa # !PLACEHOLDER # .arpa file corresponding to the arpa Language model
 lexicon_file: ../../LM/save/lexicon.txt # !PLACEHOLDER # File corresponding to the phone list
+
+# Data size
+splits_folder: ../../Tokenizer/splits # !PLACEHOLDER # Folder of the data splits
+data_size: "mid" # all: 160 hrs / mid: 40 hrs / low: 20 hrs
+train_data_id_log: !ref <output_folder>/train
 
 # Tokenier initialization
 tokenizer: !new:sentencepiece.SentencePieceProcessor
@@ -130,9 +135,9 @@ test_beam_size: 10
 # first, second or third word in a trigram token
 # sum them up would come up with 5 different ways of tokenization
 blocks_size: 6
-embedding_size: 256
+embedding_size: 1
 dictionary_size: 140 # 136 (phone labels) + 4 (<pad>/<sil>/<s>/</s>)
-global_scores_weight: 0
+global_scores_weight: 0.3
 
 ############################## models ################################
 CNN: !new:speechbrain.lobes.models.convolution.ConvolutionFrontEnd
