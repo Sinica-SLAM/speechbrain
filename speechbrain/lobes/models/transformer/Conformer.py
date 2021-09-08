@@ -171,18 +171,14 @@ class ConformerEncoderLayer(nn.Module):
 
         if attention_type == "regularMHA":
             self.mha_layer = MultiheadAttention(
-                nhead=nhead,
-                d_model=d_model,
-                dropout=dropout,
-                kdim=kdim,
-                vdim=vdim,
+                nhead=nhead, d_model=d_model, dropout=0, kdim=kdim, vdim=vdim,
             )
         elif attention_type == "RelPosMHAXL":
             # transformerXL style positional encoding
             self.mha_layer = RelPosMHAXL(
                 num_heads=nhead,
                 embed_dim=d_model,
-                dropout=dropout,
+                dropout=0,
                 mask_pos_future=causal,
             )
 

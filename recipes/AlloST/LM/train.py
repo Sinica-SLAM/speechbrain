@@ -35,10 +35,13 @@ def create_lexicon(train_text_path: str, lexicon_path: str):
 
         lexicon = []
         for train_text_line in train_text_lines:
-            lexicon += train_text_line.strip().split(" ")
+            lexicon += train_text_line.strip().lstrip().split(" ")
 
         lexicon = set(lexicon)
         lexicon = sorted(lexicon)
+
+        if "" in lexicon:
+            lexicon.remove("")
 
         lexicon_file.write("\n".join(lexicon))
 

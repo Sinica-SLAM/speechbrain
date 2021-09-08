@@ -65,18 +65,10 @@ class AlloSTDecoderLayer(TransformerDecoderLayer):
 
         if attention_type == "regularMHA":
             self.self_attn = MultiheadAttention(
-                nhead=nhead,
-                d_model=d_model,
-                kdim=kdim,
-                vdim=vdim,
-                dropout=dropout,
+                nhead=nhead, d_model=d_model, kdim=kdim, vdim=vdim, dropout=0,
             )
             self.mutihead_attn = MultiheadAttention(
-                nhead=nhead,
-                d_model=d_model,
-                kdim=kdim,
-                vdim=vdim,
-                dropout=dropout,
+                nhead=nhead, d_model=d_model, kdim=kdim, vdim=vdim, dropout=0,
             )
             if fusion_type == "stacked":
                 self.auxiliary_attn = MultiheadAttention(
@@ -84,18 +76,18 @@ class AlloSTDecoderLayer(TransformerDecoderLayer):
                     d_model=d_model,
                     kdim=kdim,
                     vdim=vdim,
-                    dropout=dropout,
+                    dropout=0,
                 )
         elif attention_type == "RelPosMHAXL":
             self.self_attn = RelPosMHAXL(
-                d_model, nhead, dropout, mask_pos_future=causal
+                d_model, nhead, 0, mask_pos_future=causal
             )
             self.mutihead_attn = RelPosMHAXL(
-                d_model, nhead, dropout, mask_pos_future=causal
+                d_model, nhead, 0, mask_pos_future=causal
             )
             if fusion_type == "stacked":
                 self.auxiliary_attn = RelPosMHAXL(
-                    d_model, nhead, dropout, mask_pos_future=causal
+                    d_model, nhead, 0, mask_pos_future=causal
                 )
 
         self.pos_ffn = PositionalwiseFeedForward(
@@ -461,9 +453,12 @@ class AlloST(TransformerASR):
             ), "conformer_activation must not be None"
 
         if is_encoder_fusion:
-            self.fusion_attn = sb.nnet.attention.MultiheadAttention(
-                nhead, d_model, dropout
-            )
+            if attention_type == "regularMHA":
+                self.fusion_attn = MultiheadAttention(nhead, d_model, 0,)
+            else:
+                self.fusion_attn = RelPosMHAXL(
+                    d_model, nhead, 0, mask_pos_future=causal,
+                )
             self.fusion_norm = sb.nnet.normalization.LayerNorm(
                 d_model, eps=1e-6
             )
@@ -512,11 +507,9 @@ class AlloST(TransformerASR):
             tgt_mask,
         ) = self.make_masks(src, tgt, wav_len, pad_idx=pad_idx)
 
-        src_phone_key_padding_mask = None
-        if self.training:
-            src_phone_key_padding_mask = get_key_padding_mask(
-                src_phone, pad_idx=pad_idx
-            )
+        src_phone_key_padding_mask = get_key_padding_mask(
+            src_phone, pad_idx=pad_idx
+        )
         src_phone_mask = None
 
         src = self.custom_src_module(src)
@@ -549,14 +542,14 @@ class AlloST(TransformerASR):
 
         if self.is_encoder_fusion:
             if self.normalize_before:
-                phone_encoder_out1 = self.fusion_norm(phone_encoder_out)
+                encoder_out1 = self.fusion_norm(encoder_out)
             else:
-                phone_encoder_out1 = phone_encoder_out
+                encoder_out1 = encoder_out
 
             encoder_out, _ = self.fusion_attn(
-                query=encoder_out,
-                key=phone_encoder_out1,
-                value=phone_encoder_out1,
+                query=encoder_out1,
+                key=phone_encoder_out,
+                value=phone_encoder_out,
                 attn_mask=src_phone_mask,
                 key_padding_mask=src_phone_key_padding_mask,
                 pos_embs=pos_embs_phone,
@@ -573,6 +566,7 @@ class AlloST(TransformerASR):
             # use standard sinusoidal pos encoding in decoder
             tgt = tgt + self.positional_encoding_decoder(tgt)
             src = src + self.positional_encoding_decoder(src)
+            src_phone = src_phone + self.positional_encoding_decoder(src_phone)
             pos_embs_encoder = None  # self.positional_encoding(src)
             pos_embs_target = None
             pos_embs_phone = None
@@ -597,7 +591,7 @@ class AlloST(TransformerASR):
             pos_embs_phone=pos_embs_phone,
         )
 
-        return encoder_out, decoder_out
+        return encoder_out, phone_encoder_out, decoder_out
 
     def decode(self, tgt, encoder_out, phone_representation):
         tgt_mask = get_lookahead_mask(tgt)
@@ -608,13 +602,19 @@ class AlloST(TransformerASR):
             encoder_out = encoder_out + self.positional_encoding_decoder(
                 encoder_out
             )
+            phone_representation = (
+                phone_representation
+                + self.positional_encoding_decoder(phone_representation)
+            )
             # pos_embs_target = self.positional_encoding(tgt)
             pos_embs_encoder = None  # self.positional_encoding(src)
             pos_embs_target = None
+            pos_embs_phone_encoder = None
         elif self.positional_encoding_type == "fixed_abs_sine":
             tgt = tgt + self.positional_encoding(tgt)  # add the encodings here
             pos_embs_target = None
             pos_embs_encoder = None
+            pos_embs_phone_encoder = None
 
         prediction, self_attns, multihead_attns = self.decoder(
             tgt,
@@ -623,5 +623,6 @@ class AlloST(TransformerASR):
             tgt_mask=tgt_mask,
             pos_embs_tgt=pos_embs_target,
             pos_embs_src=pos_embs_encoder,
+            pos_embs_phone=pos_embs_phone_encoder,
         )
         return prediction, multihead_attns[-1]

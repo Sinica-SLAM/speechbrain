@@ -9,8 +9,6 @@ import sys
 import torch
 import logging
 
-from typing import List
-
 import speechbrain as sb
 
 from sacremoses import MosesDetokenizer
@@ -51,7 +49,7 @@ class ST(sb.core.Brain):
         )
         src = self.modules.CNN(feats)
 
-        enc_out, pred = self.modules.AlloST(
+        enc_out, phone_encoder_out, pred = self.modules.AlloST(
             src,
             embed_phone_sequence,
             tokens_bos,
@@ -72,11 +70,11 @@ class ST(sb.core.Brain):
             current_epoch = self.hparams.epoch_counter.current
             if current_epoch % self.hparams.valid_search_interval == 0:
                 hyps, _ = self.hparams.valid_search(
-                    enc_out.detach(), embed_phone_sequence.detach(), wav_lens
+                    enc_out.detach(), phone_encoder_out.detach(), wav_lens
                 )
         elif stage == sb.Stage.TEST:
             hyps, _ = self.hparams.test_search(
-                enc_out.detach(), embed_phone_sequence.detach(), wav_lens
+                enc_out.detach(), phone_encoder_out.detach(), wav_lens
             )
 
         return p_seq, wav_lens, hyps
@@ -310,9 +308,6 @@ def dataio_prepare(hparams):
     phone_dictionary = build_phone_dictionary(hparams)
     ngram_scores = read_arpa(arpa_file_path=hparams["arpa_lm_file"])
 
-    # Split data to based on the setting, it could be 160/40/20
-    train_ids = split_data(hparams)
-
     # Define audio pipeline. In this case, we simply read the path contained
     # in the variable wav with the audio reader.
     @sb.utils.data_pipeline.takes("wav")
@@ -393,7 +388,10 @@ def dataio_prepare(hparams):
         allosaurus = f"<s> {allosaurus} </s>"
         yield allosaurus
         tokens_list = list(
-            map(lambda phone: phone_dictionary[phone], allosaurus.split(" "))
+            map(
+                lambda phone: phone_dictionary.get(phone, hparams["unk_index"]),
+                allosaurus.split(" "),
+            )
         )
         yield tokens_list
         tokens = torch.LongTensor(tokens_list)
@@ -475,14 +473,77 @@ def dataio_prepare(hparams):
             ],
         )
 
-    # Filter out the train data based on the data size
-    # Since we cannot get data id directly...
-    # So, need to calculate data id by hand
-    datasets["train"] = datasets["train"].filtered_sorted(
-        key_test={
-            "wav": lambda wav: wav.split("/")[-1].split("-")[0] in train_ids
-        }
-    )
+    # Sorting training data with ascending order makes the code  much
+    # faster  because we minimize zero-padding. In most of the cases, this
+    # does not harm the performance.
+    if hparams["sorting"] == "ascending":
+        # use smaller dataset to debug the model
+        if hparams["debug"]:
+            datasets["train"] = datasets["train"].filtered_sorted(
+                key_min_value={"duration": 1},
+                key_max_value={"duration": 5},
+                sort_key="duration",
+                reverse=True,
+            )
+            datasets["valid"] = datasets["valid"].filtered_sorted(
+                key_min_value={"duration": 1},
+                key_max_value={"duration": 5},
+                sort_key="duration",
+                reverse=True,
+            )
+        else:
+            datasets["train"] = datasets["train"].filtered_sorted(
+                sort_key="duration"
+            )
+            datasets["valid"] = datasets["valid"].filtered_sorted(
+                sort_key="duration"
+            )
+
+        hparams["train_dataloader_opts"]["shuffle"] = False
+        hparams["valid_dataloader_opts"]["shuffle"] = False
+    elif hparams["sorting"] == "descending":
+        # use smaller dataset to debug the model
+        if hparams["debug"]:
+            datasets["train"] = datasets["train"].filtered_sorted(
+                key_min_value={"duration": 1},
+                key_max_value={"duration": 5},
+                sort_key="duration",
+                reverse=True,
+            )
+            datasets["valid"] = datasets["valid"].filtered_sorted(
+                key_min_value={"duration": 1},
+                key_max_value={"duration": 5},
+                sort_key="duration",
+                reverse=True,
+            )
+        else:
+            datasets["train"] = datasets["train"].filtered_sorted(
+                sort_key="duration", reverse=True
+            )
+            datasets["valid"] = datasets["valid"].filtered_sorted(
+                sort_key="duration", reverse=True
+            )
+
+        hparams["train_dataloader_opts"]["shuffle"] = False
+        hparams["valid_dataloader_opts"]["shuffle"] = False
+    elif hparams["sorting"] == "random":
+        # use smaller dataset to debug the model
+        if hparams["debug"]:
+            datasets["train"] = datasets["train"].filtered_sorted(
+                key_min_value={"duration": 3},
+                key_max_value={"duration": 5},
+                sort_key="duration",
+            )
+            datasets["valid"] = datasets["valid"].filtered_sorted(
+                key_min_value={"duration": 1}, key_max_value={"duration": 5},
+            )
+
+        hparams["train_dataloader_opts"]["shuffle"] = True
+    else:
+        raise NotImplementedError(
+            "sorting must be random, ascending or descending"
+        )
+
     return datasets
 
 
@@ -502,38 +563,6 @@ def build_phone_dictionary(hparams):
             lexicon[phone_symbol] = index
 
     return lexicon
-
-
-def split_data(hparams,) -> List[str]:
-    train_fil_path = hparams["splits_folder"] + "/train"
-
-    def all_strategy(index: int) -> bool:
-        return True
-
-    def mid_strategy(index: int) -> bool:
-        return index % 4 == 0
-
-    def low_strategy(index: int) -> bool:
-        return index % 8 == 0
-
-    if hparams["data_size"] == "all":
-        split_strategy = all_strategy
-    elif hparams["data_size"] == "mid":
-        split_strategy = mid_strategy
-    elif hparams["data_size"] == "low":
-        split_strategy = low_strategy
-    else:
-        raise NotImplementedError("data_size must be all, mid or low")
-
-    train_ids = []
-    with open(train_fil_path, "r", encoding="utf-8") as train_file:
-        lines = train_file.readlines()
-
-        for index, line in enumerate(lines):
-            if split_strategy(index):
-                train_ids.append(line.strip())
-
-    return train_ids
 
 
 if __name__ == "__main__":

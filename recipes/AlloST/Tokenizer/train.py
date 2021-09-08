@@ -18,7 +18,6 @@ import sys
 import speechbrain as sb
 from hyperpyyaml import load_hyperpyyaml
 from fisher_callhome_prepare import prepare_fisher_callhome_spanish
-from allosaurus_prepare import prepare_allosaurus
 
 if __name__ == "__main__":
 
@@ -39,11 +38,7 @@ if __name__ == "__main__":
         data_folder=hparams["original_data_folder"],
         save_folder=hparams["data_folder"],
         device=hparams["device"],
-    )
-
-    # Update the existing data json with phone sequences
-    prepare_allosaurus(
-        save_folder=hparams["data_folder"], phone_type=hparams["phone_type"]
+        data_size=hparams["data_size"],
     )
 
     # Train tokenizer

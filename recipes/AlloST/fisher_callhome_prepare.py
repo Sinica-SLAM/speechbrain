@@ -77,7 +77,10 @@ class Data:
 
 
 def prepare_fisher_callhome_spanish(
-    data_folder: str, save_folder: str, device: str = "cpu",
+    data_folder: str,
+    save_folder: str,
+    data_size: str = "all",
+    device: str = "cpu",
 ):
 
     """
@@ -116,8 +119,8 @@ def prepare_fisher_callhome_spanish(
     corpus_path = f"{save_folder}/fisher-callhome-corpus"
     download_translations(path=corpus_path)
 
-    make_data_splits(
-        f"{corpus_path}/mapping"
+    data_ids = make_data_splits(
+        f"{corpus_path}/mapping", data_size,
     )  # make splitted data list from mapping files
 
     for dataset in datasets:
@@ -147,6 +150,7 @@ def prepare_fisher_callhome_spanish(
         concated_data = concate_transcriptions_by_mapping_file(
             speech_folder=speech_folder,
             mapping_file_path=f"{corpus_path}/mapping/fisher_{dataset}",
+            data_path=f"./splits/{dataset}",
             extracted_transcriptions=extracted_transcriptions,
         )
 
@@ -199,6 +203,15 @@ def prepare_fisher_callhome_spanish(
 
         # sort by utterance id
         concated_data = sorted(concated_data, key=lambda data: data.uid)
+
+        # Filter out data by data size
+        if dataset == "train":
+            concated_data = list(
+                filter(
+                    lambda data: data.uid.split("-")[0] in data_ids,
+                    concated_data,
+                )
+            )
 
         # store transcription/translation/wav files
         data_dict = {}
@@ -304,12 +317,27 @@ def extract_transcription(transcription_path: str) -> List[TDF]:
 def concate_transcriptions_by_mapping_file(
     speech_folder: str,
     mapping_file_path: str,
+    data_path: str,
     extracted_transcriptions: List[TDF],
 ) -> List[Data]:
     """return concated transcriptions from the given mapping file"""
 
-    with open(mapping_file_path, "r", encoding="utf-8") as fisher_mapping_file:
+    with open(
+        mapping_file_path, "r", encoding="utf-8"
+    ) as fisher_mapping_file, open(
+        data_path, "r", encoding="utf-8"
+    ) as train_file:
         fisher_mapping = fisher_mapping_file.readlines()
+        train_ids = train_file.readlines()
+
+        train_ids = list(map(lambda train_id: train_id.strip(), train_ids))
+        fisher_mapping = list(
+            filter(
+                lambda mapping: mapping.split(" ")[0] in train_ids,
+                fisher_mapping,
+            )
+        )
+
         utterances = []
 
         for fisher_mapping_line in fisher_mapping:
@@ -465,30 +493,65 @@ def download_translations(path: str):
 
 def make_data_splits(
     mapping_folder: str = "../data/fisher-callhome-corpus/mapping",
-):
+    data_size: str = "all",
+) -> List[str]:
     """make data split from mapping file"""
+
+    def all_strategy(index: int) -> bool:
+        return True
+
+    def mid_strategy(index: int) -> bool:
+        return index % 4 == 0
+
+    def low_strategy(index: int) -> bool:
+        return index % 8 == 0
+
+    if data_size == "all":
+        split_strategy = all_strategy
+    elif data_size == "mid":
+        split_strategy = mid_strategy
+    elif data_size == "low":
+        split_strategy = low_strategy
+    else:
+        raise NotImplementedError("data_size must be all, mid or low")
+
     fisher_splits = ["dev", "dev2", "test", "train"]
 
     if not os.path.exists("splits"):
         os.mkdir("splits")
 
-        for fisher_split in fisher_splits:
-            split = set()
-            with open(
-                f"{mapping_folder}/fisher_{fisher_split}", "r", encoding="utf-8"
-            ) as fisher_file, open(
-                f"./splits/{fisher_split}", "a+", encoding="utf-8"
-            ) as split_file:
-                fisher_file_lines = fisher_file.readlines()
+    data_ids = []
+    for fisher_split in fisher_splits:
+        split = set()
+        with open(
+            f"{mapping_folder}/fisher_{fisher_split}", "r", encoding="utf-8"
+        ) as fisher_file, open(
+            f"./splits/{fisher_split}", "w+", encoding="utf-8"
+        ) as split_file:
 
-                for fisher_file_line in fisher_file_lines:
-                    fisher_file_line = fisher_file_line.strip()
-                    fisher_file_id = fisher_file_line.split(" ")[0]
-                    split.add(fisher_file_id)
+            fisher_file_lines = fisher_file.readlines()
 
-                split = sorted(list(split))
-                for file_id in split:
+            for fisher_file_line in fisher_file_lines:
+                fisher_file_line = fisher_file_line.strip()
+                fisher_file_id = fisher_file_line.split(" ")[0]
+                split.add(fisher_file_id)
+
+            split = sorted(list(split))
+            # Based on the data size to generate data
+            if fisher_split == "train":
+                for index, file_id in enumerate(split):
                     split_file.write(f"{file_id}\n")
+                    if split_strategy(index):
+                        data_ids.append(file_id)
+            else:
+                split_file.write("\n".join(split))
+
+    with open(
+        f"./splits/{fisher_split}_{data_size}", "w+", encoding="utf-8"
+    ) as data_size_file:
+        data_size_file.write("\n".join(data_ids))
+
+    return data_ids
 
 
 def remove_punctuation(text: str) -> str:

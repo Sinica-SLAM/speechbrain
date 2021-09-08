@@ -13,7 +13,7 @@ debug: False
 seed: 8886
 num_workers: 8
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/allost_mid/<seed>
+output_folder: !ref results/allost_mid_global_weight_0.0/<seed>
 ckpt_interval_minutes: 15 # save checkpoint every N min
 bleu_file: !ref <output_folder>/bleu.txt
 save_folder: !ref <output_folder>/save
@@ -27,7 +27,6 @@ lexicon_file: ../../LM/save/lexicon.txt # !PLACEHOLDER # File corresponding to t
 
 # Data size
 splits_folder: ../../Tokenizer/splits # !PLACEHOLDER # Folder of the data splits
-data_size: "mid" # all: 160 hrs / mid: 40 hrs / low: 20 hrs
 train_data_id_log: !ref <output_folder>/train
 
 # Tokenier initialization
@@ -78,7 +77,7 @@ sorting: random
 
 # stages related parameters
 stage_one_epochs: 100 # not gonna changing optimizer in this recipe
-lr_adam: 2.5
+lr_adam: 1.0
 lr_sgd: 0.000025
 
 epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
@@ -105,7 +104,7 @@ num_encoder_layers: 12
 num_auxiliary_encoder_layers: 6
 num_decoder_layers: 6
 d_ffn: 2048
-transformer_dropout: 0.1
+transformer_dropout: 0.3
 activation: !name:torch.nn.GELU
 output_neurons: 1000
 vocab_size: 1000
@@ -113,7 +112,7 @@ attention_type: "regularMHA" # "RelPosMHAXL" or "regularMHA"
 
 # Outputs
 blank_index: 0
-label_smoothing: 0.1
+label_smoothing: 0.3
 pad_index: 0
 bos_index: 1
 eos_index: 2
@@ -131,7 +130,7 @@ test_beam_size: 10
 ngrams: 3
 embedding_size: 256
 dictionary_size: 140 # 136 (phone labels) + 4 (<pad>/<sil>/<s>/</s>)
-global_scores_weight: 0
+global_scores_weight: 0.0
 
 ############################## models ################################
 CNN: !new:speechbrain.lobes.models.convolution.ConvolutionFrontEnd

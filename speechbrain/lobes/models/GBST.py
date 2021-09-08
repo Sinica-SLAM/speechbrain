@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from speechbrain.utils.scatter_mean import scatter_mean
+from speechbrain.lobes.models.transformer.Transformer import NormalizedEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +43,8 @@ class GBST(nn.Module):
     ):
         super().__init__()
 
-        self.character_embedding = nn.Embedding(
-            dictionary_size, embedding_size, padding_idx=pad_index
+        self.character_embedding = NormalizedEmbedding(
+            vocab=dictionary_size, d_model=embedding_size
         )
         self.score_function = nn.Linear(embedding_size, 1)
         self.pos_conv = DepthwiseConv1d(embedding_size, embedding_size, ngrams)
@@ -53,9 +54,13 @@ class GBST(nn.Module):
         self.pad_index = pad_index
         self.global_scores_weight = global_scores_weight
         if self.global_scores_weight > 0:
-            self.global_score_function = nn.Sequential(
-                nn.Linear(self.blocks_size, self.blocks_size), nn.ReLU(),
+            self.global_score_function = nn.Linear(
+                self.blocks_size, self.blocks_size
             )
+
+        self.feedforward = nn.Sequential(
+            nn.Linear(embedding_size, embedding_size), nn.ReLU(),
+        )
 
     def forward(
         self,
@@ -185,5 +190,7 @@ class GBST(nn.Module):
 
         # Weighted sum over block representations
         embed_sequence = torch.mul(block_representations, scores).sum(dim=2)
+
+        embed_sequence = embed_sequence + self.feedforward(embed_sequence)
 
         return embed_sequence

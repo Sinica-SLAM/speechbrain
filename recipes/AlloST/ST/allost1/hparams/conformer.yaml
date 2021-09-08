@@ -1,6 +1,6 @@
 # ############################################################################
-# Model: E2E ST with Transformer
-# Encoder: Transformer Encoder
+# Model: E2E ST with Conformer
+# Encoder: Conformer Encoder
 # Decoder: Transformer Decoder beamsearch
 # Tokens: BPE
 # losses: CTC + KLdiv (Label Smoothing loss)
@@ -13,7 +13,7 @@ debug: False
 seed: 8886
 num_workers: 8
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/transformer_allost_mid_encoder_fusion_no_bpe/<seed>
+output_folder: !ref results/conformer_allost_mid_encoder_fusion_no_bpe_lr_0.5/<seed>
 ckpt_interval_minutes: 15 # save checkpoint every N min
 bleu_file: !ref <output_folder>/bleu.txt
 save_folder: !ref <output_folder>/save
@@ -48,10 +48,6 @@ sample_rate: 16000
 n_fft: 400
 n_mels: 80
 
-# LM relative
-order: 3
-threshold: -2
-
 compute_features: !new:speechbrain.lobes.features.Fbank
     sample_rate: !ref <sample_rate>
     n_fft: !ref <n_fft>
@@ -76,7 +72,7 @@ sorting: random
 
 # stages related parameters
 stage_one_epochs: 100 # not gonna changing optimizer in this recipe
-lr_adam: 1.0
+lr_adam: 0.25
 lr_sgd: 0.000025
 
 epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
@@ -107,7 +103,9 @@ transformer_dropout: 0.3
 activation: !name:torch.nn.GELU
 output_neurons: 1000
 vocab_size: 1000
-attention_type: "regularMHA" # "RelPosMHAXL" or "regularMHA"
+attention_type: "RelPosMHAXL" # "RelPosMHAXL" or "regularMHA"
+kernel_size: 15
+encoder_module: conformer
 
 # Outputs
 blank_index: 0
@@ -151,6 +149,8 @@ AlloST: !new:speechbrain.lobes.models.transformer.AlloST.AlloST # yamllint disab
     dropout: !ref <transformer_dropout>
     activation: !ref <activation>
     attention_type: !ref <attention_type>
+    kernel_size: !ref <kernel_size>
+    encoder_module: !ref <encoder_module>
     normalize_before: True
     causal: False
     is_encoder_fusion: True

@@ -37,10 +37,10 @@ class ST(sb.core.Brain):
         # forward modules
 
         # perform phone embedding before feed into the translation model
-        embed_phone_sequence = self.modules.phone_embedding(allosaurus_tokens)
         src = self.modules.CNN(feats)
+        embed_phone_sequence = self.modules.phone_embed(allosaurus_tokens)
 
-        enc_out, pred = self.modules.AlloST(
+        enc_out, phone_encoder_out, pred = self.modules.AlloST(
             src,
             embed_phone_sequence,
             tokens_bos,
@@ -61,11 +61,11 @@ class ST(sb.core.Brain):
             current_epoch = self.hparams.epoch_counter.current
             if current_epoch % self.hparams.valid_search_interval == 0:
                 hyps, _ = self.hparams.valid_search(
-                    enc_out.detach(), embed_phone_sequence.detach(), wav_lens
+                    enc_out.detach(), phone_encoder_out.detach(), wav_lens
                 )
         elif stage == sb.Stage.TEST:
             hyps, _ = self.hparams.test_search(
-                enc_out.detach(), embed_phone_sequence.detach(), wav_lens
+                enc_out.detach(), phone_encoder_out.detach(), wav_lens
             )
 
         return p_seq, wav_lens, hyps
@@ -294,6 +294,9 @@ def dataio_prepare(hparams):
     """This function prepares the datasets to be used in the brain class.
     It also defines the data processing pipeline through user-defined functions."""
 
+    # Prepare phone dictionary for tokenize phone into id
+    phone_dictionary = build_phone_dictionary(hparams)
+
     # Define audio pipeline. In this case, we simply read the path contained
     # in the variable wav with the audio reader.
     @sb.utils.data_pipeline.takes("wav")
@@ -361,15 +364,21 @@ def dataio_prepare(hparams):
         tokens = torch.LongTensor(tokens_list)
         yield tokens
 
-    @sb.utils.data_pipeline.takes("allosaurus_for_bpe")
+    @sb.utils.data_pipeline.takes("allosaurus")
     @sb.utils.data_pipeline.provides(
         "allosaurus", "allosaurus_list", "allosaurus_tokens",
     )
     def allosaurus_text_pipeline(allosaurus):
+        allosaurus = allosaurus if len(allosaurus) > 0 else "<sil>"
         yield allosaurus
-        allosaurus_list = hparams["phone_tokenizer"].encode_as_ids(allosaurus)
-        yield allosaurus_list
-        tokens = torch.LongTensor(allosaurus_list)
+        tokens_list = list(
+            map(
+                lambda phone: phone_dictionary.get(phone, hparams["unk_index"]),
+                allosaurus.split(" "),
+            )
+        )
+        yield tokens_list
+        tokens = torch.LongTensor(tokens_list)
         yield tokens
 
     datasets = {}
@@ -502,6 +511,22 @@ def dataio_prepare(hparams):
         )
 
     return datasets
+
+
+def build_phone_dictionary(hparams):
+    """Build the phone dictionary"""
+    lexicon = {}
+    with open(hparams["lexicon_file"], "r", encoding="utf-8") as lexicon_file:
+        phone_symbols = lexicon_file.readlines()
+
+        phone_symbols.insert(hparams["pad_index"], "<pad>")
+        phone_symbols.insert(hparams["sil_index"], "<sil>")
+
+        for index, phone_symbol in enumerate(phone_symbols):
+            phone_symbol = phone_symbol.strip()
+            lexicon[phone_symbol] = index
+
+    return lexicon
 
 
 if __name__ == "__main__":

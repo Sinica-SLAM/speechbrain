@@ -276,16 +276,12 @@ class TransformerEncoderLayer(nn.Module):
 
         if attention_type == "regularMHA":
             self.self_att = sb.nnet.attention.MultiheadAttention(
-                nhead=nhead,
-                d_model=d_model,
-                dropout=dropout,
-                kdim=kdim,
-                vdim=vdim,
+                nhead=nhead, d_model=d_model, dropout=0, kdim=kdim, vdim=vdim,
             )
 
         elif attention_type == "RelPosMHAXL":
             self.self_att = sb.nnet.attention.RelPosMHAXL(
-                d_model, nhead, dropout, mask_pos_future=causal
+                d_model, nhead, 0, mask_pos_future=causal
             )
 
         self.pos_ffn = sb.nnet.attention.PositionalwiseFeedForward(
@@ -499,26 +495,18 @@ class TransformerDecoderLayer(nn.Module):
 
         if attention_type == "regularMHA":
             self.self_attn = sb.nnet.attention.MultiheadAttention(
-                nhead=nhead,
-                d_model=d_model,
-                kdim=kdim,
-                vdim=vdim,
-                dropout=dropout,
+                nhead=nhead, d_model=d_model, kdim=kdim, vdim=vdim, dropout=0,
             )
             self.mutihead_attn = sb.nnet.attention.MultiheadAttention(
-                nhead=nhead,
-                d_model=d_model,
-                kdim=kdim,
-                vdim=vdim,
-                dropout=dropout,
+                nhead=nhead, d_model=d_model, kdim=kdim, vdim=vdim, dropout=0,
             )
 
         elif attention_type == "RelPosMHAXL":
             self.self_attn = sb.nnet.attention.RelPosMHAXL(
-                d_model, nhead, dropout, mask_pos_future=causal
+                d_model, nhead, 0, mask_pos_future=causal
             )
             self.mutihead_attn = sb.nnet.attention.RelPosMHAXL(
-                d_model, nhead, dropout, mask_pos_future=causal
+                d_model, nhead, 0, mask_pos_future=causal
             )
 
         self.pos_ffn = sb.nnet.attention.PositionalwiseFeedForward(
