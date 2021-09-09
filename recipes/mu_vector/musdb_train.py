@@ -72,7 +72,7 @@ class SpeakerBrain(sb.core.Brain):
         batch = batch.to(self.device)
         wavs, lens = batch.sig
         # Calculate Mean from stereo to mono
-        wavs = torch.mean(wavs, dim=-1, keepdim=True).squeeze()
+        wavs = torch.mean(wavs, dim=-1, keepdim=True).squeeze(-1)
 
         if stage == sb.Stage.TRAIN:
 
