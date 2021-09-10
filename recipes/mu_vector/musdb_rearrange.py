@@ -4,6 +4,23 @@ from tqdm import tqdm
 import argparse
 import csv
 
+validation_tracks = [
+    "Actions - One Minute Smile",
+    "Clara Berry And Wooldog - Waltz For My Victims",
+    "Johnny Lokke - Promises & Lies",
+    "Patrick Talbot - A Reason To Leave",
+    "Triviul - Angelsaint",
+    "Alexander Ross - Goodbye Bolero",
+    "Fergessen - Nos Palpitants",
+    "Leaf - Summerghost",
+    "Skelpolu - Human Mistakes",
+    "Young Griffo - Pennies",
+    "ANiMAL - Rockshow",
+    "James May - On The Line",
+    "Meaxic - Take A Step",
+    "Traffic Experiment - Sirens",
+]
+
 
 class rearrange_musdb:
     def __init__(self, args):
@@ -78,7 +95,6 @@ class rearrange_musdb:
                 + str(datapath).split("/")[-1]
             )
 
-            ## Copy files
             for src in tqdm(paths):
 
                 instrument_id, song_id = (
@@ -94,13 +110,16 @@ class rearrange_musdb:
                     Path.mkdir(target_dir, parents=True, exist_ok=True)
                     copyfile(src, dst)
 
-                ## Prepare train, test
+                ## Prepare train, valid, test metadata
                 meta_dst = self.meta_dir / self.meta_file
 
                 if not Path(meta_dst).exists():
                     Path.mkdir(Path(self.meta_dir), parents=True, exist_ok=True)
 
                 split = "train" if "train" in str(src) else "test"
+                if song_id in validation_tracks:
+                    split = "valid"
+
                 csv_line = [
                     instrument_id + "/" + song_id + ".wav",
                     split,

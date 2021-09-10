@@ -13,6 +13,7 @@ train_log: !ref <output_folder>/train_log.txt
 # Data files
 data_folder: musdb_no_silence/data  # e.g. /path/to/Voxceleb
 train_annotation: !ref <save_folder>/train.csv
+valid_annotation: !ref <save_folder>/dev.csv
 test_annotation: !ref <save_folder>/test.csv
 meta_file: !ref <data_folder>/meta/meta.csv
 
@@ -24,7 +25,7 @@ skip_prep: False
 ckpt_interval_minutes: 15 # save checkpoint every N min
 
 # Training parameters
-number_of_epochs: 20
+number_of_epochs: 30
 batch_size: 8
 accum_grad_count: 2
 lr: 0.001
@@ -51,6 +52,9 @@ train_dataloader_opts:
     batch_size: !ref <batch_size>
     shuffle: !ref <shuffle>
     num_workers: 2
+
+valid_dataloader_opts:
+    batch_size: !ref <batch_size>
 
 test_dataloader_opts:
     batch_size: !ref <batch_size>

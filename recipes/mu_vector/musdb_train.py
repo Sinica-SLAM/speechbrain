@@ -187,6 +187,11 @@ def dataio_prep(hparams):
         replacements={"data_root": data_folder},
     )
 
+    valid_data = sb.dataio.dataset.DynamicItemDataset.from_csv(
+        csv_path=hparams["valid_annotation"],
+        replacements={"data_root": data_folder},
+    )
+
     test_data = sb.dataio.dataset.DynamicItemDataset.from_csv(
         csv_path=hparams["test_annotation"],
         replacements={"data_root": data_folder},
@@ -244,7 +249,7 @@ def dataio_prep(hparams):
         datasets, ["id", "sig", "inst_id_encoded"]
     )
 
-    return (train_data, test_data, inst_label_encoder)
+    return (train_data, valid_data, test_data, inst_label_encoder)
 
 
 if __name__ == "__main__":
@@ -271,13 +276,13 @@ if __name__ == "__main__":
             "data_folder": hparams["data_folder"],
             "save_folder": hparams["save_folder"],
             "meta_file": hparams["meta_file"],
-            "splits": ["train", "test"],
+            "splits": ["train", "valid", "test"],
             "seg_dur": hparams["sentence_len"],
         },
     )
 
     # Dataset IO prep: creating Dataset objects and proper encodings for phones
-    train_data, test_data, _ = dataio_prep(hparams)
+    train_data, valid_data, test_data, _ = dataio_prep(hparams)
 
     # Create experiment directory
     sb.core.create_experiment_directory(
@@ -299,9 +304,9 @@ if __name__ == "__main__":
     speaker_brain.fit(
         speaker_brain.hparams.epoch_counter,
         train_data,
-        test_data,
+        valid_data,
         train_loader_kwargs=hparams["train_dataloader_opts"],
-        valid_loader_kwargs=hparams["test_dataloader_opts"],
+        valid_loader_kwargs=hparams["valid_dataloader_opts"],
     )
 
     # Identification test

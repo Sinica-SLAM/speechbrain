@@ -20,6 +20,7 @@ from speechbrain.dataio.dataio import (
 logger = logging.getLogger(__name__)
 OPT_FILE = "opt_nsynth_prepare.pkl"
 TRAIN_CSV = "train.csv"
+DEV_CSV = "dev.csv"
 TEST_CSV = "test.csv"
 SAMPLERATE = 44100
 META = "meta"
@@ -29,7 +30,7 @@ def prepare_musdb(
     data_folder,
     save_folder,
     meta_file,
-    splits=["train", "test"],
+    splits=["train", "valid", "test"],
     seg_dur=3.0,
     amp_th=5e-04,
     source=None,
@@ -89,6 +90,7 @@ def prepare_musdb(
     # Setting ouput files
     save_opt = os.path.join(save_folder, OPT_FILE)
     save_csv_train = os.path.join(save_folder, TRAIN_CSV)
+    save_csv_valid = os.path.join(save_folder, DEV_CSV)
     save_csv_test = os.path.join(save_folder, TEST_CSV)
 
     # Create the data folder contains test data from the source
@@ -113,12 +115,19 @@ def prepare_musdb(
     logger.info(msg)
 
     # Split data into train and test
-    wav_lst_train, wav_lst_test = _get_sound_split_lists(data_folder, meta_file)
+    wav_lst_train, wav_lst_valid, wav_lst_test = _get_sound_split_lists(
+        data_folder, meta_file
+    )
 
     # Creating csv file for training data
     if "train" in splits:
         prepare_csv(
             seg_dur, wav_lst_train, save_csv_train, random_segment, amp_th
+        )
+
+    if "valid" in splits:
+        prepare_csv(
+            seg_dur, wav_lst_valid, save_csv_valid, random_segment, amp_th
         )
 
     if "test" in splits:
@@ -146,6 +155,7 @@ def skip(splits, save_folder, conf):
 
     split_files = {
         "train": TRAIN_CSV,
+        "valid": DEV_CSV,
         "test": TEST_CSV,
     }
     for split in splits:
@@ -215,6 +225,7 @@ def _get_sound_split_lists(data_folder, meta_file):
     """
 
     train_lst = []
+    valid_lst = []
     test_lst = []
 
     print("Getting file list...")
@@ -229,10 +240,13 @@ def _get_sound_split_lists(data_folder, meta_file):
         if data["split"] == "train":
             train_lst.append(os.path.join(data_folder[0], "wav", data["ID"]))
 
+        elif data["split"] == "valid":
+            valid_lst.append(os.path.join(data_folder[0], "wav", data["ID"]))
+
         elif data["split"] == "test":
             test_lst.append(os.path.join(data_folder[0], "wav", data["ID"]))
 
-    return train_lst, test_lst
+    return train_lst, valid_lst, test_lst
 
 
 def _get_chunks(seg_dur, audio_id, audio_duration):
@@ -294,7 +308,7 @@ def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
             # Stereo channels
             signal, fs = torchaudio.load(wav_file)
 
-        except ValueError:
+        except RuntimeError:
             logger.info(f"No signal found: {wav_file}")
             continue
 
