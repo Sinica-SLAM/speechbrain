@@ -234,7 +234,7 @@ def _get_sound_split_lists(data_folder, meta_file):
     meta_splits = list(csv.DictReader(f))
 
     # import random
-    # meta_splits = random.sample(meta_splits,30)
+    # meta_splits = random.sample(meta_splits,50)
 
     for data in meta_splits:
         if data["split"] == "train":

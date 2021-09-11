@@ -123,7 +123,7 @@ class SpeakerBrain(sb.core.Brain):
         if stage == sb.Stage.TRAIN:
             inst_id = torch.cat([inst_id] * self.n_augment, dim=0)
 
-        loss = self.hparams.compute_cost(predictions, inst_id, lens,)
+        loss = self.hparams.compute_cost(predictions, inst_id, lens)
 
         if hasattr(self.hparams.lr_annealing, "on_batch_end"):
             self.hparams.lr_annealing.on_batch_end(self.optimizer)
@@ -197,7 +197,7 @@ def dataio_prep(hparams):
         replacements={"data_root": data_folder},
     )
 
-    datasets = [train_data, test_data]
+    datasets = [train_data, valid_data, test_data]
     inst_label_encoder = sb.dataio.encoder.CategoricalEncoder()
 
     snt_len_sample = int(hparams["sample_rate"] * hparams["sentence_len"])
