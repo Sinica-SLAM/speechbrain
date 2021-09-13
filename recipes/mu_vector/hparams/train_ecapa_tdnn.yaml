@@ -44,7 +44,7 @@ base_lr: 0.00000001
 max_lr: !ref <lr>
 step_size: 65000
 sample_rate: 16000
-sentence_len: 3.0 # seconds
+sentence_len: 4.0 # seconds
 shuffle: True
 random_chunk: False
 
@@ -137,10 +137,10 @@ add_rev_noise: !new:speechbrain.lobes.augment.EnvCorrupt
 
 augment_pipeline: [
     !ref <augment_wavedrop>,
-    !ref <augment_speed>,
-    !ref <add_rev>,
-    !ref <add_noise>,
-    !ref <add_rev_noise>
+    # !ref <augment_speed>,
+    # !ref <add_rev>,
+    # !ref <add_noise>,
+    # !ref <add_rev_noise>
 ]
 concat_augment: True
 

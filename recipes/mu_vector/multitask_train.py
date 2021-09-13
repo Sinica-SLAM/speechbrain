@@ -255,7 +255,6 @@ class SpeakerBrain(sb.core.Brain):
         """
         batch = batch.to(self.device)
         wavs, lens = batch.sig
-        print(wavs.shape)
         if stage == sb.Stage.TRAIN:
 
             # Applying the augmentation pipeline
@@ -548,7 +547,6 @@ if __name__ == "__main__":
             "meta_test": hparams["meta_test"],
             "splits": ["train", "dev", "test"],
             "seg_dur": hparams["sentence_len"],
-            "vad": hparams["vad"],
         },
     )
 
