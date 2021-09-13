@@ -39,9 +39,11 @@ class SpeakerBrain(sb.core.Brain):
         epoch_counter,
         train_set,
         valid_set=None,
+        test_set=None,
         progressbar=None,
         train_loader_kwargs={},
         valid_loader_kwargs={},
+        test_loader_kwargs={},
     ):
         if not (
             isinstance(train_set, DataLoader)
@@ -59,6 +61,17 @@ class SpeakerBrain(sb.core.Brain):
                 stage=sb.Stage.VALID,
                 ckpt_prefix=None,
                 **valid_loader_kwargs,
+            )
+
+        if test_set is not None and not (
+            isinstance(test_set, DataLoader)
+            or isinstance(test_set, LoopedLoader)
+        ):
+            test_set = self.make_dataloader(
+                test_set,
+                stage=sb.Stage.TEST,
+                ckpt_prefix=None,
+                **test_loader_kwargs,
             )
 
         self.on_fit_start()
@@ -144,6 +157,30 @@ class SpeakerBrain(sb.core.Brain):
                         args=[sb.Stage.VALID, avg_valid_loss, epoch],
                     )
 
+            # Test stage
+            if test_set is not None:
+                self.on_stage_start(sb.Stage.TEST, epoch)
+                self.modules.eval()
+                avg_test_loss = 0.0
+                with torch.no_grad():
+                    for batch in tqdm(
+                        test_set, dynamic_ncols=True, disable=not enable
+                    ):
+                        self.step += 1
+                        loss = self.evaluate_batch(batch, stage=sb.Stage.TEST)
+                        avg_test_loss = self.update_average(loss, avg_test_loss)
+
+                        # Debug mode only runs a few batches
+                        if self.debug and self.step == self.debug_batches:
+                            break
+
+                    # Only run validation "on_stage_end" on main process
+                    self.step = 0
+                    run_on_main(
+                        self.on_stage_end,
+                        args=[sb.Stage.TEST, avg_test_loss, epoch],
+                    )
+
             # Debug mode only runs a few epochs
             if self.debug and epoch == self.debug_epochs:
                 break
@@ -218,7 +255,7 @@ class SpeakerBrain(sb.core.Brain):
         """
         batch = batch.to(self.device)
         wavs, lens = batch.sig
-
+        print(wavs.shape)
         if stage == sb.Stage.TRAIN:
 
             # Applying the augmentation pipeline
@@ -323,7 +360,7 @@ class SpeakerBrain(sb.core.Brain):
 
         return {
             "id": id_loss,
-            "fam": self.hparams.family_weight * family_loss,
+            "fam": family_loss,
         }
 
     def on_stage_start(self, stage, epoch=None):
@@ -402,10 +439,12 @@ def dataio_prep(hparams):
         else:
             start = int(start)
             stop = int(stop)
+
         num_frames = stop - start
         sig, fs = torchaudio.load(
             wav, num_frames=num_frames, frame_offset=start
         )
+
         sig = sig.transpose(0, 1).squeeze(1)
         return sig
 
@@ -509,6 +548,7 @@ if __name__ == "__main__":
             "meta_test": hparams["meta_test"],
             "splits": ["train", "dev", "test"],
             "seg_dur": hparams["sentence_len"],
+            "vad": hparams["vad"],
         },
     )
 
@@ -536,13 +576,15 @@ if __name__ == "__main__":
         speaker_brain.hparams.epoch_counter,
         train_data,
         valid_data,
-        train_loader_kwargs=hparams["dataloader_options"],
-        valid_loader_kwargs=hparams["dataloader_options"],
+        test_data,
+        train_loader_kwargs=hparams["train_dataloader_opts"],
+        valid_loader_kwargs=hparams["valid_dataloader_opts"],
+        test_loader_kwargs=hparams["test_dataloader_opts"],
     )
 
     # Identification test
     speaker_brain.evaluate(
         test_set=test_data,
         min_key="ErrorRate",
-        test_loader_kwargs=hparams["dataloader_options"],
+        test_loader_kwargs=hparams["test_dataloader_opts"],
     )
