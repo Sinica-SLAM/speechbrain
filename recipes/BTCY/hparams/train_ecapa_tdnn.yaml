@@ -4,7 +4,7 @@
 # ################################
 
 # Basic parameters
-tag: ecapa_32_t2
+tag: ecapa_32
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
 output_folder: !ref results/<tag>/<seed>
@@ -32,7 +32,8 @@ ckpt_interval_minutes: 15 # save checkpoint every N min
 
 # Training parameters
 number_of_epochs: 1
-batch_size: 32
+batch_size: 16
+gradient_accumulation: 2
 lr: 0.001
 base_lr: 0.00000001
 max_lr: !ref <lr>
