@@ -4,7 +4,7 @@
 # ################################
 
 # Basic parameters
-tag: ecapa_32_t2
+tag: btcy_64_30
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
 output_folder: !ref results/<tag>/<seed>
@@ -31,8 +31,8 @@ skip_prep: False
 ckpt_interval_minutes: 15 # save checkpoint every N min
 
 # Training parameters
-number_of_epochs: 1
-batch_size: 32
+number_of_epochs: 30
+batch_size: 64
 lr: 0.001
 base_lr: 0.00000001
 max_lr: !ref <lr>
@@ -145,6 +145,11 @@ modules:
     mean_var_norm: !ref <mean_var_norm>
 
 compute_asoftmax: !new:speechbrain.nnet.losses.LogSoftmaxWrapper
+    loss_fn: !new:speechbrain.nnet.losses.AdditiveAngularMargin
+        margin: 0.2
+        scale: 30
+
+compute_bl: !new:speechbrain.nnet.losses.LogSoftmaxWrapper
     loss_fn: !new:speechbrain.nnet.losses.AdditiveAngularMargin
         margin: 0.2
         scale: 30
