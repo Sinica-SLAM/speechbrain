@@ -14,6 +14,7 @@ Author
     * Hwidong Na 2020
     * Nauman Dawalatabad 2020
 """
+import logging
 import os
 import sys
 import random
@@ -23,6 +24,8 @@ import speechbrain as sb
 from speechbrain.utils.data_utils import download_file
 from hyperpyyaml import load_hyperpyyaml
 from speechbrain.utils.distributed import run_on_main
+
+logger = logging.getLogger(__name__)
 
 
 class SpeakerBrain(sb.core.Brain):
@@ -86,7 +89,12 @@ class SpeakerBrain(sb.core.Brain):
         if stage == sb.Stage.TRAIN:
             spkid = torch.cat([spkid] * self.n_augment, dim=0)
 
-        loss = self.hparams.compute_asoftmax(predictions, spkid, lens)
+        log_softmax = self.hparams.compute_asoftmax(predictions, spkid, lens)
+        bhattacha_loss = self.hparams.compute_bhattacha(embeddings, spkid)
+
+        loss = (
+            1 - self.hparams.alpha
+        ) * log_softmax + self.hparams.alpha * bhattacha_loss
 
         if stage == sb.Stage.TRAIN and hasattr(
             self.hparams.lr_annealing, "on_batch_end"

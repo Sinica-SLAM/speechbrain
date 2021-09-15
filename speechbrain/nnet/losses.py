@@ -1095,3 +1095,48 @@ def nll_loss_kd(
     # Loss averaging
     loss = torch.sum(loss.reshape(N_snt, max_len) * mask) / torch.sum(mask)
     return loss
+
+
+class BhattacharyyaLoss(nn.Module):
+    def __init__(self, eta: float = 0.5, min_var: float = 1e-1):
+        super(BhattacharyyaLoss, self).__init__()
+        self.eta = eta
+        self.min_var = min_var
+
+    def forward(self, input, target):
+        values = F.cosine_similarity(input[:, None], input, dim=-1)
+
+        batch_size = target.size(0)
+
+        target = target.repeat((1, batch_size))
+
+        bool_mask_pos = torch.eq(target.permute(1, 0), target)
+        bool_mask_pos = bool_mask_pos.unsqueeze(-1)
+
+        dot_values_pos = torch.masked_select(values, bool_mask_pos)
+        dot_values_neg = torch.masked_select(values, ~bool_mask_pos)
+
+        n_pos = dot_values_pos.nelement()
+        n_neg = dot_values_neg.nelement()
+
+        mean_neg = torch.mean(dot_values_neg)
+        var_neg = torch.var(dot_values_neg)
+        var_neg = torch.clamp(var_neg, min=self.min_var)
+
+        mean_pos = torch.mean(dot_values_pos)
+        var_pos = torch.var(dot_values_pos)
+        var_pos = torch.clamp(var_pos, min=self.min_var)
+
+        if n_pos == 0 or n_neg == 0:
+            if n_pos != 0:
+                return -((1 - mean_pos) ** 2) / var_pos
+            elif n_neg != 0:
+                return -((-1 - mean_neg) ** 2) / var_neg
+            else:
+                return 0
+
+        bhattacharyya_coefficient = 0.25 * torch.log(
+            0.25 * (var_pos / var_neg + var_neg / var_pos + 2)
+        ) + 0.25 * ((mean_neg - mean_pos) ** 2 / (var_pos + var_neg))
+
+        return (1 - self.eta) * mean_neg - self.eta * bhattacharyya_coefficient
