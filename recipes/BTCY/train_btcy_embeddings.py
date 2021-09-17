@@ -89,12 +89,21 @@ class SpeakerBrain(sb.core.Brain):
         if stage == sb.Stage.TRAIN:
             spkid = torch.cat([spkid] * self.n_augment, dim=0)
 
-        log_softmax = self.hparams.compute_asoftmax(predictions, spkid, lens)
-        bhattacha_loss = self.hparams.compute_bhattacha(embeddings, spkid)
+        if self.step % self.hparams.global_information_batch_size == 0:
+            embeddings_norm = torch.norm(embeddings, p=2, dim=2).unsqueeze(-1)
+            embeddings = embeddings / embeddings_norm
 
-        loss = (
-            1 - self.hparams.alpha
-        ) * log_softmax + self.hparams.alpha * bhattacha_loss
+            log_softmax = self.hparams.compute_asoftmax(
+                predictions, spkid, lens
+            )
+
+            bhattacha_loss = self.hparams.compute_bhattacha(embeddings, spkid)
+
+            loss = (
+                1 - self.hparams.alpha
+            ) * log_softmax + self.hparams.alpha * bhattacha_loss
+        else:
+            loss = self.hparams.compute_asoftmax(predictions, spkid, lens)
 
         if stage == sb.Stage.TRAIN and hasattr(
             self.hparams.lr_annealing, "on_batch_end"

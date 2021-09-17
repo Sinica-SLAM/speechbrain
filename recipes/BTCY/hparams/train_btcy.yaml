@@ -4,7 +4,7 @@
 # ################################
 
 # Basic parameters
-tag: btcy_64_30_alpha_1_test
+tag: btcy_32_30_alpha_0.5
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
 output_folder: !ref results/<tag>/<seed>
@@ -31,17 +31,18 @@ skip_prep: False
 ckpt_interval_minutes: 15 # save checkpoint every N min
 
 # Training parameters
-number_of_epochs: 30
-batch_size: 64
-lr: 0.5 # 0.001
-base_lr: 0.0000005 # 0.00000001
+number_of_epochs: 1
+batch_size: 32
+global_information_batch_size: 8
+lr: 0.001
+base_lr: 0.00000001
 max_lr: !ref <lr>
 step_size: 65000
 sample_rate: 16000
 sentence_len: 3.0 # seconds
 shuffle: True
 random_chunk: True
-alpha: 1
+alpha: 0.5
 
 # Feature parameters
 n_mels: 80
@@ -151,7 +152,9 @@ compute_asoftmax: !new:speechbrain.nnet.losses.LogSoftmaxWrapper
         scale: 30
 
 compute_bhattacha: !new:speechbrain.nnet.losses.BhattacharyyaLoss
-    eta: 0.5
+    beta: 0.6
+    gamma: -1
+    zeta: -0.9
 
 compute_bl: !new:speechbrain.nnet.losses.LogSoftmaxWrapper
     loss_fn: !new:speechbrain.nnet.losses.AdditiveAngularMargin

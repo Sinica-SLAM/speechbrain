@@ -1098,10 +1098,23 @@ def nll_loss_kd(
 
 
 class BhattacharyyaLoss(nn.Module):
-    def __init__(self, eta: float = 0.5, min_var: float = 1e-1):
+    def __init__(
+        self,
+        beta: float = 0.6,
+        gamma: float = -1,
+        zeta: float = -0.9,
+        min_var: float = 1e-1,
+        max_pos: float = 0.75,
+        min_neg: float = -0.5,
+    ):
         super(BhattacharyyaLoss, self).__init__()
-        self.eta = eta
+        self.beta = beta
+        self.gamma = gamma
+        self.zeta = zeta
+
         self.min_var = min_var
+        self.max_pos = max_pos
+        self.min_neg = min_neg
 
     def forward(self, input, target):
         values = F.cosine_similarity(input[:, None], input, dim=-1)
@@ -1116,8 +1129,12 @@ class BhattacharyyaLoss(nn.Module):
         dot_values_pos = torch.masked_select(values, bool_mask_pos)
         dot_values_neg = torch.masked_select(values, ~bool_mask_pos)
 
-        n_pos = dot_values_pos.nelement()
-        n_neg = dot_values_neg.nelement()
+        dot_values_pos = torch.maximum(
+            dot_values_pos, torch.tensor(self.max_pos)
+        )
+        dot_values_neg = torch.minimum(
+            dot_values_neg, torch.tensor(self.min_neg)
+        )
 
         mean_neg = torch.mean(dot_values_neg)
         var_neg = torch.var(dot_values_neg)
@@ -1127,16 +1144,15 @@ class BhattacharyyaLoss(nn.Module):
         var_pos = torch.var(dot_values_pos)
         var_pos = torch.clamp(var_pos, min=self.min_var)
 
-        if n_pos == 0 or n_neg == 0:
-            if n_pos != 0:
-                return -((1 - mean_pos) ** 2) / var_pos
-            elif n_neg != 0:
-                return -((-1 - mean_neg) ** 2) / var_neg
-            else:
-                return 0
-
         bhattacharyya_coefficient = 0.25 * torch.log(
             0.25 * (var_pos / var_neg + var_neg / var_pos + 2)
         ) + 0.25 * ((mean_neg - mean_pos) ** 2 / (var_pos + var_neg))
 
-        return (1 - self.eta) * mean_neg - self.eta * bhattacharyya_coefficient
+        bhattacharyya_distance = torch.log(
+            1 + torch.exp(self.zeta * bhattacharyya_coefficient)
+        )
+        pos_distance = torch.log(1 + torch.exp(self.gamma * mean_pos))
+
+        return (
+            1 - self.beta
+        ) * pos_distance + self.beta * bhattacharyya_distance
