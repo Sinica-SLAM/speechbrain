@@ -126,15 +126,6 @@ valid_beam_size: 10
 test_beam_size: 10
 
 ############################## models ################################
-CNN: !new:speechbrain.lobes.models.convolution.ConvolutionFrontEnd
-    input_shape: (8, 10, 80)
-    num_blocks: 2
-    num_layers_per_block: 1
-    out_channels: (256, 256)
-    kernel_sizes: (3, 3)
-    strides: (2, 2)
-    residuals: (False, False)
-
 Transformer: !new:speechbrain.lobes.models.transformer.ESPNetConformer.E2E # yamllint disable-line rule:line-length
     idim: !ref <n_mels>
     odim: !ref <vocab_size>
@@ -165,7 +156,7 @@ modules:
     Transformer: !ref <Transformer>
 
 model: !new:torch.nn.ModuleList
-    - [!ref <CNN>, !ref <Transformer>]
+    - [!ref <Transformer>]
 
 # define two optimizers here for two-stage training
 Adam: !name:torch.optim.Adam

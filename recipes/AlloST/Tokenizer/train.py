@@ -38,7 +38,6 @@ if __name__ == "__main__":
         data_folder=hparams["original_data_folder"],
         save_folder=hparams["data_folder"],
         device=hparams["device"],
-        data_size=hparams["data_size"],
     )
 
     # Train tokenizer

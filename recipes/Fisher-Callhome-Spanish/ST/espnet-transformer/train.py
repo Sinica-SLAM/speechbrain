@@ -12,9 +12,10 @@ Authors
 """
 
 import sys
-from typing import List
 import torch
 import logging
+
+from typing import List
 
 import speechbrain as sb
 
