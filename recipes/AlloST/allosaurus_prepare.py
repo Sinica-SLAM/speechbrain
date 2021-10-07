@@ -21,6 +21,16 @@ ALLOSAURUS = read_recognizer()
 logger = logging.getLogger(__name__)
 
 
+def skip(save_folder: str, dataset: str) -> bool:
+    """Detect when preparation of phone sequence can be skipped"""
+    is_skip = True
+
+    if not os.path.isdir(f"{save_folder}/{dataset}/phone/wav"):
+        is_skip = False
+
+    return is_skip
+
+
 def read_json(json_path: str) -> Dict[str, Any]:
     """Read the given json file, and return a dictionary"""
     with open(json_path, "r", encoding="utf-8") as json_file:
@@ -112,6 +122,12 @@ def prepare_allosaurus(save_folder: str, number_of_workers: int = 64):
 
     progress_bar = tqdm(datasets)
     for dataset in progress_bar:
+        if skip(save_folder, dataset):
+            logger.info(
+                f"Skipping preparation of {dataset}, completed in previous run."
+            )
+            continue
+
         phone_folder = f"{save_folder}/{dataset}/phone"
         if not os.path.exists(phone_folder):
             os.mkdir(phone_folder)

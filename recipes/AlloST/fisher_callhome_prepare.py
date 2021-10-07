@@ -173,13 +173,6 @@ def prepare_fisher_callhome_spanish(
                 data=concated_data, translations=translations
             )
 
-        # filter out empty or long transcription/translation
-        concated_data = list(
-            filter(
-                lambda data: 0 < len(data.transcription) < 400, concated_data
-            )
-        )
-
         if dataset == "train":
             concated_data = list(
                 filter(
@@ -187,19 +180,38 @@ def prepare_fisher_callhome_spanish(
                     concated_data,
                 )
             )
+            # filter out empty or long transcription/translation
+            concated_data = list(
+                filter(
+                    lambda data: 0 < len(data.transcription) < 400,
+                    concated_data,
+                )
+            )
+
+            # ignore empty or long utterances
+            concated_data = list(
+                filter(lambda data: 0 < data.duration < 30, concated_data)
+            )
         else:
+            # filter out empty or long transcription/translation
             for number in range(4):
                 concated_data = list(
                     filter(
-                        lambda data: 0 < len(data.translations[number]) < 400,
+                        lambda data: 0 < len(data.translations[number]),
                         concated_data,
                     )
                 )
+            concated_data = list(
+                filter(
+                    lambda data: 0 < len(data.transcription) < 400,
+                    concated_data,
+                )
+            )
 
-        # ignore empty or long utterances
-        concated_data = list(
-            filter(lambda data: 0 < data.duration < 30, concated_data)
-        )
+            # Filter out empty utterance
+            concated_data = list(
+                filter(lambda data: 0 < data.duration, concated_data)
+            )
 
         # sort by utterance id
         concated_data = sorted(concated_data, key=lambda data: data.uid)
