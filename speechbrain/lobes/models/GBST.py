@@ -12,7 +12,7 @@ import torch.nn.functional as F
 
 from torch import nn
 
-from charformer_pytorch import charformer_GBST
+from charformer_pytorch import GBST as charformer_GBST
 from speechbrain.utils.scatter_mean import scatter_mean
 from speechbrain.lobes.models.transformer.Transformer import NormalizedEmbedding
 
