@@ -147,7 +147,7 @@ GBST: !new:speechbrain.lobes.models.GBST.GBST
     pad_index: !ref <pad_index>
     global_scores_weight: !ref <global_scores_weight>
 
-AlloST: !new:speechbrain.lobes.models.transformer.AlloST.AlloST # yamllint disable-line rule:line-length
+AlloST: !new:speechbrain.lobes.models.AlloST.AlloST.AlloST # yamllint disable-line rule:line-length
     input_size: 5120
     tgt_vocab: !ref <output_neurons>
     d_model: !ref <d_model>

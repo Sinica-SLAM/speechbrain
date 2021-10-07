@@ -137,7 +137,7 @@ phone_embed: !new:speechbrain.lobes.models.transformer.Transformer.NormalizedEmb
     vocab: 132 # 130 (phone labels) + 2 (<pad>/<sil>)
     d_model: 256
 
-AlloST: !new:speechbrain.lobes.models.transformer.AlloST.AlloST # yamllint disable-line rule:line-length
+AlloST: !new:speechbrain.lobes.models.AlloST.AlloST.AlloST # yamllint disable-line rule:line-length
     input_size: 5120
     tgt_vocab: !ref <output_neurons>
     d_model: !ref <d_model>

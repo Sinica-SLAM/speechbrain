@@ -6,8 +6,8 @@
 
 
 # Set up folders for reading from and writing to
-original_data_folder: /mnt/md1/user_jamfly/CORPUS # !PLACEHOLDER # i.e., path to the original data contain LDCXXX
-data_folder: /mnt/md1/user_jamfly/sb_data/Fisher_data_mid # !PLACEHOLDER # Path where to store the .json and prepared data
+original_data_folder: /mnt/md0/user_jamfly/CORPUS # !PLACEHOLDER # i.e., path to the original data contain LDCXXX
+data_folder: /mnt/md0/user_jamfly/sb_data/Fisher_data_mid # !PLACEHOLDER # Path where to store the .json and prepared data
 output_folder: ./save_phone #!PLACEHOLDER # Path where to store theTokenizer output (model, logs etc)
 device: "cuda:0" # for resample audio
 
@@ -20,6 +20,7 @@ token_output: 1000
 # translation_0: translation in target language
 # transcription_and_translation: joint transcription and translation
 annotation_read: "allosaurus_for_bpe" # field to read
+data_size: "mid" # all: 160 hrs / mid: 40 hrs / low: 20 hrs
 
 # Tokenizer object
 tokenizer: !name:speechbrain.tokenizers.SentencePiece.SentencePiece
