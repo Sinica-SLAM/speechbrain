@@ -4,7 +4,7 @@
 # ################################
 
 # Basic parameters
-tag: btcy_32_30_alpha_0.5
+tag: toy_btcy_batch_256_train_eer_test_epoch_5
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
 output_folder: !ref results/<tag>/<seed>
@@ -25,15 +25,15 @@ rir_folder: !ref <data_folder> # Change it if needed
 # VoxCeleb1-E (cleaned): https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/list_test_all2.txt.
 # VoxCeleb1-E and VoxCeleb1-H lists are drawn from the VoxCeleb1 training set.
 # Therefore you cannot use any files in VoxCeleb1 for training if you are using these lists for testing.
+# verification_file: !ref <data_folder>/meta/veri_test2.txt
 verification_file: !ref <data_folder>/meta/veri_test2.txt
 
 skip_prep: False
 ckpt_interval_minutes: 15 # save checkpoint every N min
 
 # Training parameters
-number_of_epochs: 1
-batch_size: 32
-global_information_batch_size: 8
+number_of_epochs: 5
+batch_size: 256
 lr: 0.001
 base_lr: 0.00000001
 max_lr: !ref <lr>
@@ -42,7 +42,7 @@ sample_rate: 16000
 sentence_len: 3.0 # seconds
 shuffle: True
 random_chunk: True
-alpha: 0.5
+alpha: 1
 
 # Feature parameters
 n_mels: 80

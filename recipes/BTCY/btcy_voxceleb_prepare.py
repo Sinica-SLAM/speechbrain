@@ -140,47 +140,6 @@ def prepare_voxceleb(
         data_folder, split_ratio, verification_pairs_file, split_speaker
     )
 
-    # Create the verification file
-    from itertools import combinations
-
-    verification_pairs_files = f"{save_folder}/veri_test.txt"
-    pairs = list(combinations(wav_lst_train, 2))
-
-    same = list(
-        filter(
-            lambda pair: pair[0].split("/wav/")[1].split("/")[0]
-            == pair[1].split("/wav/")[1].split("/")[0],
-            pairs,
-        )
-    )
-    difference = list(
-        filter(
-            lambda pair: pair[0].split("/wav/")[1].split("/")[0]
-            != pair[1].split("/wav/")[1].split("/")[0],
-            pairs,
-        )
-    )
-
-    random.shuffle(same)
-    random.shuffle(difference)
-
-    same = same[:20000]
-    difference = difference[:20000]
-
-    pairs = same + difference
-    with open(
-        verification_pairs_files, "w+", encoding="utf-8"
-    ) as verification_files:
-        for pair in pairs:
-            first_path = pair[0].split("/wav/")[1]
-            second_path = pair[1].split("/wav/")[1]
-
-            first_spk_id = first_path.split("/")[0]
-            second_spk_id = second_path.split("/")[0]
-
-            is_same = int(first_spk_id == second_spk_id)
-            verification_files.write(f"{is_same} {first_path} {second_path}\n")
-
     # Creating csv file for training data
     if "train" in splits:
         prepare_csv(
@@ -326,31 +285,29 @@ def _get_utt_split_lists(
         else:
             # avoid test speakers for train and dev splits
             audio_files_list = []
-            spk_ids = {}
             for f in glob.glob(path, recursive=True):
                 try:
                     spk_id = f.split("/wav/")[1].split("/")[0]
-                    if spk_id not in spk_ids:
-                        spk_ids[spk_id] = 1
-                    else:
-                        spk_ids[spk_id] = spk_ids[spk_id] + 1
                 except ValueError:
                     logger.info(f"Malformed path: {f}")
                     continue
                 if spk_id not in test_spks:
                     audio_files_list.append(f)
 
-            # Get the highest 8 spk_ids
-            spk_ids = sorted(spk_ids.items(), key=lambda x: x[1], reverse=True)[
-                :8
-            ]
-            spk_ids = list(map(lambda spk_id: spk_id[0], spk_ids))
+            items = {}
+            for audio_file in audio_files_list:
+                spk_id = audio_file.split("/")[-3]
+                if spk_id not in items:
+                    items[spk_id] = 1
+                else:
+                    items[spk_id] = items[spk_id] + 1
+
+            items = sorted(items.items(), key=lambda x: x[1], reverse=True)
+            items = list(map(lambda item: item[0], items))
+
             audio_files_list = list(
                 filter(
-                    lambda audio_file: audio_file.split("/wav/")[1].split("/")[
-                        0
-                    ]
-                    in spk_ids,
+                    lambda audio_file: audio_file.split("/")[-3] in items,
                     audio_files_list,
                 )
             )

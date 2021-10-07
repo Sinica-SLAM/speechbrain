@@ -1151,8 +1151,10 @@ class BhattacharyyaLoss(nn.Module):
         bhattacharyya_distance = torch.log(
             1 + torch.exp(self.zeta * bhattacharyya_coefficient)
         )
-        pos_distance = torch.log(1 + torch.exp(self.gamma * mean_pos))
+        pos_position = torch.log(1 + torch.exp(self.gamma * mean_pos))
+
+        # return mean_neg - mean_pos
 
         return (
             1 - self.beta
-        ) * pos_distance + self.beta * bhattacharyya_distance
+        ) * pos_position + self.beta * bhattacharyya_distance

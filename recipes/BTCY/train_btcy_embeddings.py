@@ -89,21 +89,16 @@ class SpeakerBrain(sb.core.Brain):
         if stage == sb.Stage.TRAIN:
             spkid = torch.cat([spkid] * self.n_augment, dim=0)
 
-        if self.step % self.hparams.global_information_batch_size == 0:
-            embeddings_norm = torch.norm(embeddings, p=2, dim=2).unsqueeze(-1)
-            embeddings = embeddings / embeddings_norm
+        embeddings_norm = torch.norm(embeddings, p=2, dim=2).unsqueeze(-1)
+        embeddings = embeddings / embeddings_norm
 
-            log_softmax = self.hparams.compute_asoftmax(
-                predictions, spkid, lens
-            )
+        log_softmax = self.hparams.compute_asoftmax(predictions, spkid, lens)
 
-            bhattacha_loss = self.hparams.compute_bhattacha(embeddings, spkid)
+        bhattacha_loss = self.hparams.compute_bhattacha(embeddings, spkid)
 
-            loss = (
-                1 - self.hparams.alpha
-            ) * log_softmax + self.hparams.alpha * bhattacha_loss
-        else:
-            loss = self.hparams.compute_asoftmax(predictions, spkid, lens)
+        loss = (
+            1 - self.hparams.alpha
+        ) * log_softmax + self.hparams.alpha * bhattacha_loss
 
         if stage == sb.Stage.TRAIN and hasattr(
             self.hparams.lr_annealing, "on_batch_end"
@@ -139,9 +134,12 @@ class SpeakerBrain(sb.core.Brain):
                 train_stats=self.train_stats,
                 valid_stats=stage_stats,
             )
+            # self.checkpointer.save_and_keep_only(
+            #     meta={"ErrorRate": stage_stats["ErrorRate"]},
+            #     min_keys=["ErrorRate"],
+            # )
             self.checkpointer.save_and_keep_only(
-                meta={"ErrorRate": stage_stats["ErrorRate"]},
-                min_keys=["ErrorRate"],
+                meta={"loss": stage_stats["loss"]}, min_keys=["loss"],
             )
 
 
