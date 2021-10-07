@@ -126,7 +126,7 @@ valid_beam_size: 10
 test_beam_size: 10
 
 ############################## models ################################
-Transformer: !new:speechbrain.lobes.models.transformer.ESPNetConformer.E2E # yamllint disable-line rule:line-length
+Transformer: !new:speechbrain.lobes.models.transformer.ESPnetConformer.E2E # yamllint disable-line rule:line-length
     idim: !ref <n_mels>
     odim: !ref <vocab_size>
     adim: !ref <d_model>

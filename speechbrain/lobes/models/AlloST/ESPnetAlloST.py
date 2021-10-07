@@ -27,8 +27,8 @@ from espnet.nets.pytorch_backend.transformer.add_sos_eos import add_sos_eos
 from espnet.nets.pytorch_backend.transformer.mask import subsequent_mask
 from espnet.nets.pytorch_backend.transformer.mask import target_mask
 
-from speechbrain.lobes.models.AlloST.ESPNetDualEncoder import DualEncoder
-from speechbrain.lobes.models.transformer.ESPNetTransformer import (
+from speechbrain.lobes.models.AlloST.ESPnetDualEncoder import DualEncoder
+from speechbrain.lobes.models.transformer.ESPnetTransformer import (
     E2E as E2ETransformer,
 )
 

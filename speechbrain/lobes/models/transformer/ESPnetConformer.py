@@ -5,7 +5,7 @@ Refer to: https://arxiv.org/abs/2005.08100
 """
 
 from espnet.nets.pytorch_backend.conformer.encoder import Encoder
-from speechbrain.lobes.models.transformer.ESPNetTransformer import (
+from speechbrain.lobes.models.transformer.ESPnetTransformer import (
     E2E as E2ETransformer,
 )
 

@@ -133,7 +133,7 @@ is_encoder_fusion: True
 is_encoder_share_weights: False
 decoder_fusion_type: vanilla
 
-Transformer: !new:speechbrain.lobes.models.AlloST.ESPNetAlloST.E2E # yamllint disable-line rule:line-length
+Transformer: !new:speechbrain.lobes.models.AlloST.ESPnetAlloST.E2E # yamllint disable-line rule:line-length
     idim: !ref <n_mels>
     odim: !ref <vocab_size>
     adim: !ref <d_model>
