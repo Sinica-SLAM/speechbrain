@@ -5,12 +5,14 @@ Authors
 """
 
 from typing import Optional
+
 import torch
 import logging
 import torch.nn.functional as F
 
 from torch import nn
 
+from charformer_pytorch import charformer_GBST
 from speechbrain.utils.scatter_mean import scatter_mean
 from speechbrain.lobes.models.transformer.Transformer import NormalizedEmbedding
 
@@ -33,6 +35,31 @@ class DepthwiseConv1d(nn.Module):
 
 
 class GBST(nn.Module):
+    def __init__(
+        self,
+        embedding_size: int,
+        dictionary_size: int,
+        ngram: int,
+        down_sample_factors: int = 1,
+        is_score_consensus_attention: bool = False,
+    ):
+        super().__init__()
+        self.gbst = charformer_GBST(
+            num_tokens=dictionary_size,
+            dim=embedding_size,
+            max_block_size=ngram,
+            downsample_factor=down_sample_factors,
+            score_consensus_attn=is_score_consensus_attention,
+        )
+
+    def forward(self, x: torch.LongTensor):
+        x_mask = x.eq(self.pad_index).unsqueeze(-1).to(x.device)
+        embed_x, x_mask = self.gbst(x, x_mask)
+
+        return embed_x
+
+
+class GlobalGBST(nn.Module):
     def __init__(
         self,
         embedding_size: int,

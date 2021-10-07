@@ -1,3 +1,5 @@
 allosaurus
+charformer-pytorch
+espnet
 sacrebleu
 sacremoses
