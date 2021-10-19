@@ -20,7 +20,7 @@ from espnet.nets.pytorch_backend.ctc import CTC
 from espnet.nets.pytorch_backend.transformer.attention import (
     MultiHeadedAttention,
 )
-from espnet.nets.pytorch_backend.transformer.decoder import Decoder
+from speechbrain.lobes.models.AlloST.ESPnetAlloSTDecoder import Decoder
 
 from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask
 from espnet.nets.pytorch_backend.transformer.add_sos_eos import add_sos_eos
@@ -77,6 +77,7 @@ class E2E(E2ETransformer):
         sos: int = 1,
         eos: int = 2,
         ignore_id: int = -1,
+        auxiliary_ignore_id: int = 0,
     ):
         """Construct an E2E object.
         :param int idim: dimension of inputs
@@ -124,6 +125,8 @@ class E2E(E2ETransformer):
             macaron_style=macaron_style,
             use_cnn_module=use_cnn_module,
             cnn_module_kernel=cnn_module_kernel,
+            padding_idx=ignore_id,
+            auxiliary_padding_idx=auxiliary_ignore_id,
             is_fusion=encoder_fusion,
             is_share_weights=encoder_share_weights,
             phone_embed_type=phone_embed_type,

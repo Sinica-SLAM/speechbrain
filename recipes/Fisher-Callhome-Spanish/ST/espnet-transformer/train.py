@@ -34,6 +34,7 @@ class ST(sb.core.Brain):
         wavs, wav_lens = batch.sig
 
         tokens, _ = batch.tokens  # for translation task
+        transcription_tokens, _ = batch.transcription_tokens  # for asr task
 
         # compute features
         feats = self.hparams.compute_features(wavs)
@@ -44,10 +45,13 @@ class ST(sb.core.Brain):
         feature_sizes = torch.round(wav_lens * feats.shape[1]).int()
 
         # forward modules
+        st_pred_pad = None
+        asr_pred_pad = None
+        loss_ctc = 0
+
         if stage == sb.Stage.TEST:
             from argparse import Namespace
 
-            pred_pad = None
             args = {
                 "beam_size": 10,
                 "penalty": 0.3,
@@ -68,9 +72,17 @@ class ST(sb.core.Brain):
 
                 hyps.append(hyp)
         else:
-            enc_out, enc_mask, pred_pad, pred_mask = self.hparams.Transformer(
-                feats, feature_sizes, tokens
-            )
+            (
+                enc_out,
+                enc_mask,
+                st_pred_pad,
+                pred_mask,
+            ) = self.hparams.Transformer(feats, feature_sizes, tokens)
+
+            if self.hparams.asr_weight > 0:
+                asr_pred_pad, loss_ctc = self.hparams.Transformer.forward_asr(
+                    enc_out, enc_mask, transcription_tokens
+                )
 
             # compute outputs
             if stage == sb.Stage.TRAIN:
@@ -78,14 +90,15 @@ class ST(sb.core.Brain):
             elif stage == sb.Stage.VALID:
                 hyps = enc_out.argmax(dim=-1)
 
-        return pred_pad, hyps
+        return st_pred_pad, asr_pred_pad, hyps, loss_ctc
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss given predictions and targets."""
-        (pred_pad, hyps,) = predictions
+        (st_pred_pad, asr_pred_pad, hyps, loss_ctc,) = predictions
 
         ids = batch.id
         tokens_eos, tokens_eos_lens = batch.tokens_eos
+        transcription_eos, _ = batch.transcription_eos
         current_epoch = self.hparams.epoch_counter.current
         valid_search_interval = self.hparams.valid_search_interval
 
@@ -131,10 +144,22 @@ class ST(sb.core.Brain):
                 self.bleu_metric.append(ids, predictions, [targets])
 
             # compute the accuracy of the one-step-forward prediction
-            self.acc_metric.append(pred_pad, tokens_eos, tokens_eos_lens)
-            loss = self.hparams.seq_cost(pred_pad, tokens_eos)
+            self.acc_metric.append(st_pred_pad, tokens_eos, tokens_eos_lens)
         else:
-            loss = self.hparams.seq_cost(pred_pad, tokens_eos)
+            asr_attention_loss = 0
+            if self.hparams.asr_weight > 0 and self.hparams.ctc_weight < 1:
+                asr_attention_loss = self.hparams.seq_cost(
+                    asr_pred_pad, transcription_eos
+                )
+            asr_loss = (
+                self.hparams.ctc_weight * loss_ctc
+                + (1 - self.hparams.ctc_weight) * asr_attention_loss
+            )
+            st_loss = self.hparams.seq_cost(st_pred_pad, tokens_eos)
+            loss = (
+                self.hparams.asr_weight * asr_loss
+                + (1 - self.hparams.asr_weight) * st_loss
+            )
 
         return loss
 

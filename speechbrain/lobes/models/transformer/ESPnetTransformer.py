@@ -18,6 +18,7 @@ from espnet.nets.pytorch_backend.transformer.encoder import Encoder
 from espnet.nets.pytorch_backend.transformer.mask import subsequent_mask
 from espnet.nets.pytorch_backend.transformer.mask import target_mask
 from espnet.nets.st_interface import STInterface
+from espnet.nets.pytorch_backend.ctc import CTC
 
 
 class E2E(STInterface, torch.nn.Module):
@@ -49,6 +50,9 @@ class E2E(STInterface, torch.nn.Module):
         sos: int = 1,
         eos: int = 2,
         ignore_id: int = 0,
+        mtlalpha: float = 0.0,
+        asr_weight: float = 0.0,
+        ctc_type: str = "warpctc",
     ):
         """Construct an E2E object.
         :param int idim: dimension of inputs
@@ -89,6 +93,30 @@ class E2E(STInterface, torch.nn.Module):
             src_attention_dropout_rate=transformer_attn_dropout_rate,
         )
 
+        # submodule for ASR task
+        self.mtlalpha = mtlalpha
+        self.asr_weight = asr_weight
+        if self.asr_weight > 0 and mtlalpha < 1:
+            self.decoder_asr = Decoder(
+                odim=odim,
+                attention_dim=adim,
+                attention_heads=aheads,
+                linear_units=dunits,
+                num_blocks=dlayers,
+                dropout_rate=dropout_rate,
+                positional_dropout_rate=dropout_rate,
+                self_attention_dropout_rate=transformer_attn_dropout_rate,
+                src_attention_dropout_rate=transformer_attn_dropout_rate,
+            )
+
+        self.adim = adim  # used for CTC (equal to d_model)
+        if self.asr_weight > 0 and mtlalpha > 0.0:
+            self.ctc = CTC(
+                odim, adim, dropout_rate, ctc_type=ctc_type, reduce=True
+            )
+        else:
+            self.ctc = None
+
         self.pad = 0  # use <blank> for padding
         self.sos = sos
         self.eos = eos
@@ -116,6 +144,46 @@ class E2E(STInterface, torch.nn.Module):
         pred_pad, pred_mask = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask)
 
         return hs_pad, hs_mask, pred_pad, pred_mask
+
+    def forward_asr(self, hs_pad, hs_mask, ys_pad):
+        """Forward pass in the auxiliary ASR task.
+        :param torch.Tensor hs_pad: batch of padded source sequences (B, Tmax, idim)
+        :param torch.Tensor hs_mask: batch of input token mask (B, Lmax)
+        :param torch.Tensor ys_pad: batch of padded target sequences (B, Lmax)
+        :return: ASR attention loss value
+        :rtype: torch.Tensor
+        :return: accuracy in ASR attention decoder
+        :rtype: float
+        :return: ASR CTC loss value
+        :rtype: torch.Tensor
+        :return: character error rate from CTC prediction
+        :rtype: float
+        :return: character error rate from attetion decoder prediction
+        :rtype: float
+        :return: word error rate from attetion decoder prediction
+        :rtype: float
+        """
+        # attention
+        pred_pad = None
+        loss_ctc = 0
+        if self.mtlalpha < 1:
+            ys_in_pad_asr, ys_out_pad_asr = add_sos_eos(
+                ys_pad, self.sos, self.eos, self.ignore_id
+            )
+            ys_mask_asr = target_mask(ys_in_pad_asr, self.ignore_id)
+            pred_pad, _ = self.decoder_asr(
+                ys_in_pad_asr, ys_mask_asr, hs_pad, hs_mask
+            )
+
+        # CTC
+        if self.mtlalpha > 0:
+            batch_size = hs_pad.size(0)
+            hs_len = hs_mask.view(batch_size, -1).sum(1)
+            loss_ctc = self.ctc(
+                hs_pad.view(batch_size, -1, self.adim), hs_len, ys_pad
+            )
+
+        return pred_pad, loss_ctc
 
     def scorers(self):
         """Scorers."""

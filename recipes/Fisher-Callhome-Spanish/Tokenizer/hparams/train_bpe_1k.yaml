@@ -6,9 +6,9 @@
 
 
 # Set up folders for reading from and writing to
-original_data_folder: !PLACEHOLDER # i.e., path to the original data contain LDCXXX
-data_folder: !PLACEHOLDER # Path where to store the .json and prepared data
-output_folder: !PLACEHOLDER # Path where to store theTokenizer output (model, logs etc)
+original_data_folder: /mnt/md0/user_jamfly/CORPUS # !PLACEHOLDER # i.e., path to the original data contain LDCXXX
+data_folder: /mnt/md0/user_jamfly/sb_data/Fisher_data_mid # !PLACEHOLDER # Path where to store the .json and prepared data
+output_folder: ./save #!PLACEHOLDER # Path where to store theTokenizer output (model, logs etc)
 device: "cuda:0" # for resample audio
 
 # Tokenizer parameters

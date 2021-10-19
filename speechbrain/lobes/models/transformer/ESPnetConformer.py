@@ -44,6 +44,9 @@ class E2E(E2ETransformer):
         sos: int = 1,
         eos: int = 2,
         ignore_id: int = -1,
+        mtlalpha: float = 0.0,
+        asr_weight: float = 0.0,
+        ctc_type: str = "warpctc",
     ):
         """Construct an E2E object.
         :param int idim: dimension of inputs
@@ -71,6 +74,9 @@ class E2E(E2ETransformer):
             sos,
             eos,
             ignore_id,
+            mtlalpha,
+            asr_weight,
+            ctc_type,
         )
 
         self.encoder = Encoder(

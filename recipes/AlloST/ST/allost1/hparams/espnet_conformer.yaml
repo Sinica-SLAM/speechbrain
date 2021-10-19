@@ -15,7 +15,7 @@ debug: False
 seed: 8886
 num_workers: 8
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/allost_espnet_mid_sp/<seed>
+output_folder: !ref results/allost_espnet_mid_sp_lr_2.5_both_fusion/<seed>
 ckpt_interval_minutes: 15 # save checkpoint every N min
 bleu_file: !ref <output_folder>/bleu.txt
 save_folder: !ref <output_folder>/save
@@ -80,7 +80,7 @@ sorting: random
 
 # stages related parameters
 stage_one_epochs: 100 # not gonna changing optimizer in this recipe
-lr_adam: 1.0
+lr_adam: 2.5
 lr_sgd: 0.000025
 
 epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
@@ -131,7 +131,7 @@ test_beam_size: 10
 # AlloST fusion related configuration
 is_encoder_fusion: True
 is_encoder_share_weights: False
-decoder_fusion_type: vanilla
+decoder_fusion_type: stacked
 
 Transformer: !new:speechbrain.lobes.models.AlloST.ESPnetAlloST.E2E # yamllint disable-line rule:line-length
     idim: !ref <n_mels>
@@ -163,6 +163,7 @@ Transformer: !new:speechbrain.lobes.models.AlloST.ESPnetAlloST.E2E # yamllint di
     sos: !ref <bos_index>
     eos: !ref <eos_index>
     ignore_id: !ref <pad_index>
+    auxiliary_ignore_id: !ref <pad_index>
 
 modules:
     Transformer: !ref <Transformer>
