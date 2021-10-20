@@ -143,6 +143,21 @@ class ST(sb.core.Brain):
                 ]
                 self.bleu_metric.append(ids, predictions, [targets])
 
+            asr_attention_loss = 0
+            if self.hparams.asr_weight > 0 and self.hparams.ctc_weight < 1:
+                asr_attention_loss = self.hparams.seq_cost(
+                    asr_pred_pad, transcription_eos
+                )
+            asr_loss = (
+                self.hparams.ctc_weight * loss_ctc
+                + (1 - self.hparams.ctc_weight) * asr_attention_loss
+            )
+            st_loss = self.hparams.seq_cost(st_pred_pad, tokens_eos)
+            loss = (
+                self.hparams.asr_weight * asr_loss
+                + (1 - self.hparams.asr_weight) * st_loss
+            )
+
             # compute the accuracy of the one-step-forward prediction
             self.acc_metric.append(st_pred_pad, tokens_eos, tokens_eos_lens)
         else:
@@ -594,8 +609,8 @@ if __name__ == "__main__":
         valid_loader_kwargs=hparams["valid_dataloader_opts"],
     )
 
-    for dataset in ["dev", "dev2", "test"]:
-        st_brain.evaluate(
-            datasets[dataset],
-            test_loader_kwargs=hparams["test_dataloader_opts"],
-        )
+    # for dataset in ["dev", "dev2", "test"]:
+    #     st_brain.evaluate(
+    #         datasets[dataset],
+    #         test_loader_kwargs=hparams["test_dataloader_opts"],
+    #     )
