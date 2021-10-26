@@ -13,32 +13,37 @@ __set_seed: !apply:torch.manual_seed [!ref <seed>]
 
 # e.g. '/yourpath/wsj0-mix/2speakers'
 # end with 2speakers for wsj0-2mix or 3speakers for wsj0-3mix
-data_folder: !PLACEHOLDER
+data_folder: musdb18
+
+# Data restore path
+origin_datapath: /mnt/md1/datasets/musdb18
+target_datapath: musdb18
 
 # the path for wsj0/si_tr_s/ folder -- only needed if dynamic mixing is used
 # e.g. /yourpath/wsj0-processed/si_tr_s/
 base_folder_dm: /yourpath/wsj0-processed/si_tr_s/
 
-experiment_name: dprnn
+experiment_name: dprnn-baseline
 output_folder: !ref results/<experiment_name>/<seed>
 train_log: !ref <output_folder>/train_log.txt
 save_folder: !ref <output_folder>/save
-train_data: !ref <save_folder>/wsj_tr.csv
-valid_data: !ref <save_folder>/wsj_cv.csv
-test_data: !ref <save_folder>/wsj_tt.csv
+train_data: !ref <save_folder>/musdb18_train.csv
+valid_data: !ref <save_folder>/musdb18_valid.csv
+test_data: !ref <save_folder>/musdb18_test.csv
+nomalize_data: !ref <save_folder>/musdb.json
 skip_prep: False
 
 
 # Experiment params
 auto_mix_prec: False # Set it to True for mixed precision
 test_only: False
-num_spks: 2 # set to 3 for wsj0-3mix
+num_spks: 4
 progressbar: True
 save_audio: False # Save estimated sources on disk
-sample_rate: 8000
+sample_rate: 44100
 
 # Training parameters
-N_epochs: 200
+N_epochs: 100
 batch_size: 1
 lr: 0.00015
 clip_grad_norm: 5
@@ -47,7 +52,11 @@ loss_upper_lim: 999999  # this is the upper limit for an acceptable loss
 limit_training_signal_len: False
 # this is the length of sequences if we choose to limit
 # the signal length of training sequences
-training_signal_len: 32000000
+training_signal_len: 132300 # sample rate 44100 * 3
+# valid_signal_len: 1764000 # sample rate 44100 * 40
+
+train_seg_dur: 3 # train seg length (sec)
+valid_seg_dur: 3 # valid seg length (sec)
 
 # Set it to True to dynamically create mixtures at training time
 dynamic_mixing: False
@@ -132,7 +141,9 @@ optimizer: !name:torch.optim.Adam
     lr: !ref <lr>
     weight_decay: 0
 
-loss: !name:speechbrain.nnet.losses.get_si_snr_with_pitwrapper
+loss: !name:speechbrain.nnet.losses.mse_loss
+
+sisnr: !name:speechbrain.nnet.losses.cal_si_snr
 
 lr_scheduler: !new:speechbrain.nnet.schedulers.ReduceLROnPlateau
     factor: 0.5
