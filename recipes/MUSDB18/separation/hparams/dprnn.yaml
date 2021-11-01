@@ -23,14 +23,14 @@ target_datapath: musdb18
 # e.g. /yourpath/wsj0-processed/si_tr_s/
 base_folder_dm: /yourpath/wsj0-processed/si_tr_s/
 
-experiment_name: dprnn-baseline
+experiment_name: dprnn-baseline-100epoch
 output_folder: !ref results/<experiment_name>/<seed>
 train_log: !ref <output_folder>/train_log.txt
 save_folder: !ref <output_folder>/save
 train_data: !ref <save_folder>/musdb18_train.csv
 valid_data: !ref <save_folder>/musdb18_valid.csv
 test_data: !ref <save_folder>/musdb18_test.csv
-nomalize_data: !ref <save_folder>/musdb.json
+nomalize_data: !ref /mnt/md1/user_victor/speechbrain/recipes/MUSDB18/meta/musdb.json
 skip_prep: False
 
 
@@ -43,6 +43,7 @@ save_audio: False # Save estimated sources on disk
 sample_rate: 44100
 
 # Training parameters
+# accum_grad_count: 2
 N_epochs: 100
 batch_size: 1
 lr: 0.00015
@@ -97,7 +98,6 @@ dataloader_opts:
     batch_size: !ref <batch_size>
     num_workers: 3
 
-
 # Specifying the network
 Encoder: !new:speechbrain.lobes.models.dual_path.Encoder
     kernel_size: !ref <kernel_size>
@@ -141,7 +141,7 @@ optimizer: !name:torch.optim.Adam
     lr: !ref <lr>
     weight_decay: 0
 
-loss: !name:speechbrain.nnet.losses.mse_loss
+loss: !name:speechbrain.nnet.losses.l1_loss
 
 sisnr: !name:speechbrain.nnet.losses.cal_si_snr
 

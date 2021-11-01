@@ -199,7 +199,7 @@ class Separation(sb.Brain):
         mix, mix_lens = mix
         mix, mix_lens = mix.to(self.device), mix_lens.to(self.device)
 
-        mix = mix.mean(dim=-1, keepdim=True)
+        mix = mix.mean(dim=-1)
         # print('mix', mix.shape)
 
         # Convert targets to tensor, and calculate Mean from stereo to mono
@@ -211,20 +211,17 @@ class Separation(sb.Brain):
             dim=-1,
         ).to(self.device)
 
+        # Normalize
+        norm = self.normalize(songnames)
+        mix = (mix - norm[0]["mean"]) / norm[0]["std"]
+        targets = (targets - norm[0]["mean"]) / norm[0]["std"]
+
         # Add speech distortions
         # print(mix.shape)
         if stage == sb.Stage.TRAIN:
-
-            norm = self.normalize(songnames)
-            # mean = [m in norm]
-            # print(norm, mix.shape, targets.shape)
-            mix = (mix - norm[0]["mean"]) / norm[0]["std"]
-            targets = (targets - norm[0]["mean"]) / norm[0]["std"]
-
             with torch.no_grad():
                 if self.hparams.use_speedperturb or self.hparams.use_rand_shift:
                     mix, targets = self.add_speed_perturb(targets, mix_lens)
-
                     mix = targets.sum(-1)
 
                 if self.hparams.use_wavedrop:
@@ -268,11 +265,7 @@ class Separation(sb.Brain):
 
         predictions = predictions.clone().permute(1, 0, 2)
         targets = targets.clone().permute(1, 0, 2)
-        sisnr = self.hparams.sisnr(targets, predictions)
-        # print(loss_mat.shape)
-        # mean_over = [x for x in range(len(loss_mat.shape))]
-        # sisnr = loss_mat.mean(dim=mean_over[:-2])
-        # print(loss,sisnr)
+        sisnr = self.hparams.sisnr(targets, predictions).mean()
 
         return loss, sisnr
 
@@ -373,8 +366,14 @@ class Separation(sb.Brain):
             batch.other_sig,
         ]
 
+        songnames = [
+            song.split("/")[-1].replace(".wav", "") for song in batch.mix_wav
+        ]
+
         with torch.no_grad():
-            predictions, targets = self.compute_forward(mixture, targets, stage)
+            predictions, targets = self.compute_forward(
+                mixture, targets, stage, songnames
+            )
             loss, sisnr = self.compute_objectives(predictions, targets)
 
         # Manage audio file saving
@@ -388,20 +387,12 @@ class Separation(sb.Brain):
 
         return loss.detach()
 
-    def on_stage_start(self, stage, epoch=None):
-        """Gets called at the beginning of an epoch."""
-        if stage != sb.Stage.TRAIN:
-            self.sisnr_metric = self.hparams.sisnr()
-
     def on_stage_end(self, stage, stage_loss, epoch):
         """Gets called at the end of a epoch."""
         # Compute/store important stats
         stage_stats = {"loss": stage_loss}
         if stage == sb.Stage.TRAIN:
             self.train_stats = stage_stats
-
-        # else:
-        #     stage_stats["si-snr"] = self.sisnr_metric.summarize()
 
         # Perform end-of-iteration things, like annealing, logging, etc.
         if stage == sb.Stage.VALID:
@@ -424,7 +415,7 @@ class Separation(sb.Brain):
                 valid_stats=stage_stats,
             )
             self.checkpointer.save_and_keep_only(
-                meta={"si-snr": stage_stats["si-snr"]}, min_keys=["si-snr"],
+                meta={"loss": stage_stats["loss"]}, min_keys=["loss"],
             )
         elif stage == sb.Stage.TEST:
             self.hparams.train_logger.log_stats(
@@ -550,13 +541,29 @@ class Separation(sb.Brain):
                         batch.drums_sig,
                         batch.other_sig,
                     ]
+                    songnames = [
+                        song.split("/")[-1].replace(".wav", "")
+                        for song in batch.mix_wav
+                    ]
 
                     with torch.no_grad():
                         predictions, targets = self.compute_forward(
-                            batch.mix_sig, targets, sb.Stage.TEST
+                            (mixture, mix_len),
+                            targets,
+                            sb.Stage.TEST,
+                            songnames,
                         )
 
-                    if snt_id[0].split("_")[0] == str(song_id):
+                        norm = self.normalize(songnames)
+                        predictions = (
+                            predictions * norm[0]["std"] + norm[0]["mean"]
+                        )
+                        targets = targets * norm[0]["std"] + norm[0]["mean"]
+
+                    if (
+                        snt_id[0].split("_")[0] == str(song_id)
+                        and i != len(t) - 1
+                    ):
                         concat_mixture.append(mixture)
                         concat_predictions.append(predictions)
                         concat_targets.append(targets)
@@ -568,7 +575,6 @@ class Separation(sb.Brain):
                         )
                         concat_targets = torch.cat(concat_targets, dim=1)
 
-                        # print(concat_mixture.shape, concat_predictions.shape, concat_targets.shape)
                         # Compute SI-SNR
                         loss, sisnr = self.compute_objectives(
                             concat_predictions, concat_targets
@@ -584,13 +590,15 @@ class Separation(sb.Brain):
 
                         # Stereo to mono
                         mixture_signal = torch.mean(mixture_signal, dim=2)
-                        # print(mixture_signal.shape, targets.shape)
+
+                        # print(mixture_signal.shape, concat_targets.shape)
+                        # print(concat_targets[0].shape, concat_predictions[0].shape, mixture_signal[0].shape)
+
                         loss, sisnr_baseline = self.compute_objectives(
                             mixture_signal, concat_targets
                         )
                         sisnr_i = sisnr - sisnr_baseline
 
-                        # print(targets[0].shape, predictions[0].shape)
                         # Compute SDR
                         sdr, _, _, _ = bss_eval_sources(
                             concat_targets[0].t().cpu().numpy(),
@@ -914,6 +922,6 @@ if __name__ == "__main__":
         )
 
     # Eval
-    separator.evaluate(test_data, min_key="si-snr")
+    separator.evaluate(test_data, min_key="loss")
     # separator.device = 'cpu'
     separator.save_results(test_data)
