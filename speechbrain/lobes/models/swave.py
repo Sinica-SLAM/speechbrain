@@ -377,17 +377,30 @@ class SWave(nn.Module):
                 mixture.shape[0], self.C, self.N, mixture_w.shape[2]
             )
 
-            output_ii = self.decoder(output_ii)
-            T_est = output_ii.size(-1)
-            output_ii = F.pad(output_ii, (0, T_mix - T_est))
+            # print('output_ii', output_ii.shape)
+            # To Stereo
+            output_ii = self.to_stereo(output_ii.unsqueeze(-1))
+            # print('to stereo', output_ii.shape)
+            output_ii_l, output_ii_r = output_ii[..., 0], output_ii[..., 1]
+            output_ii_l, output_ii_r = (
+                self.decoder(output_ii_l),
+                self.decoder(output_ii_r),
+            )
+            T_est = output_ii_l.size(-1)
+            output_ii_l, output_ii_r = (
+                F.pad(output_ii_l, (0, T_mix - T_est)),
+                F.pad(output_ii_r, (0, T_mix - T_est)),
+            )
+            output_ii = torch.cat(
+                [output_ii_l.unsqueeze(-1), output_ii_r.unsqueeze(-1)], dim=-1
+            )
+            # print('output_ii after decode', output_ii.shape)
             outputs.append(output_ii)
 
         outputs = torch.stack(outputs)
-        outputs = outputs.unsqueeze(-1)
-        outputs = self.to_stereo(outputs)
         outputs = outputs.permute(0, 1, 3, 4, 2)
 
-        return outputs  # Estimates (mulcat blocks, batch, num_spks, channel, samples)
+        return outputs  # Estimates (mulcat blocks, batch, samples, channel, num_spks)
 
 
 class Encoder(nn.Module):

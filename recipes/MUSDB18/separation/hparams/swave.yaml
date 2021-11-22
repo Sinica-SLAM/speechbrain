@@ -23,7 +23,7 @@ target_datapath: musdb18
 # e.g. /yourpath/wsj0-processed/si_tr_s/
 base_folder_dm: /yourpath/wsj0-processed/si_tr_s/
 
-experiment_name: swave-baseline
+experiment_name: swave-baseline-b2
 output_folder: !ref results/<experiment_name>/<seed>
 train_log: !ref <output_folder>/train_log.txt
 save_folder: !ref <output_folder>/save
@@ -40,14 +40,13 @@ auto_mix_prec: False # Set it to True for mixed precision
 test_only: False
 num_spks: 4
 progressbar: True
-save_audio: False # Save estimated sources on disk
 sample_rate: 44100
 
 # Training parameters
-# accum_grad_count: 2
-N_epochs: 19
+grad_accum_count: 4
+N_epochs: 100
 batch_size: 1
-lr: 0.00015
+lr: 0.0005
 clip_grad_norm: 5
 loss_upper_lim: 999999  # this is the upper limit for an acceptable loss
 # if True, the training sequences are cut to a specified length
@@ -88,12 +87,6 @@ wavedrop: !new:speechbrain.lobes.augment.TimeDomainSpecAugment
 threshold_byloss: True
 threshold: -30
 
-# Encoder parameters
-N_encoder_out: 256
-out_channels: 256
-kernel_size: 16
-kernel_stride: 8
-
 # Dataloader options
 dataloader_opts:
     batch_size: !ref <batch_size>
@@ -105,7 +98,7 @@ model: !new:speechbrain.lobes.models.swave.SWave
     L: 14                       # Kernel Size
     H: 128                      # LSTM Neurons
     R: 6                        # MULCAT Blocks (output layers)
-    C: 4                        # Number Speakers
+    C: !ref <num_spks>          # Number Speakers
     sr: !ref <sample_rate>      # Sample Rate
     segment: 4                  # Chunk Size
     input_normalize: False
@@ -118,8 +111,8 @@ loss: !name:speechbrain.nnet.losses.l1_loss
 
 lr_scheduler: !new:speechbrain.nnet.schedulers.ReduceLROnPlateau
     factor: 0.5
-    patience: 2
-    dont_halve_until_epoch: 85
+    patience: 5
+    dont_halve_until_epoch: 30
 
 epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
     limit: !ref <N_epochs>

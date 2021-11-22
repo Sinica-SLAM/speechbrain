@@ -59,6 +59,7 @@ class Separation(sb.Brain):
 
         self.normalize_data = normalize_data
         self.output_layers = 6
+        self.count = 0
 
     def fit(
         self,
@@ -228,8 +229,8 @@ class Separation(sb.Brain):
         if stage == "inference":
             return est_source
 
-        # print('est', est_source.shape)
-        return est_source, targets  # (ordering-- vocal, bass, drum, others)
+        # print('est', est_source.shape, 'targets', targets.shape)
+        return est_source, targets  # (ordering-- vocal, bass, drum, other)
 
     def compute_objectives(self, predictions, targets, stage):
         """Computes the l1 loss"""
@@ -309,7 +310,10 @@ class Separation(sb.Brain):
             if (
                 loss < self.hparams.loss_upper_lim and loss.nelement() > 0
             ):  # the fix for computational problems
-                loss.backward()
+
+                # normalize the loss by gradient_accumulation step
+                (loss / self.hparams.grad_accum_count).backward()
+
                 if self.hparams.clip_grad_norm >= 0:
                     torch.nn.utils.clip_grad_norm_(
                         self.modules.parameters(), self.hparams.clip_grad_norm
@@ -323,13 +327,17 @@ class Separation(sb.Brain):
                     )
                 )
                 loss.data = torch.tensor(0).to(self.device)
-        self.optimizer.zero_grad()
+
+            # Gradient accumulation
+            if self.step % self.hparams.grad_accum_count == 0:
+                self.check_gradients(loss)
+                self.optimizer.step()
+                self.optimizer.zero_grad()
 
         return loss.detach().cpu()
 
     def evaluate_batch(self, batch, stage):
         """Computations needed for validation/test batches"""
-        snt_id = batch.id
         mixture = batch.mix_sig
         targets = [
             batch.vocals_sig,
@@ -341,15 +349,6 @@ class Separation(sb.Brain):
         with torch.no_grad():
             predictions, targets = self.compute_forward(mixture, targets, stage)
             loss = self.compute_objectives(predictions, targets, stage)
-
-        # Manage audio file saving
-        if stage == sb.Stage.TEST and self.hparams.save_audio:
-            if hasattr(self.hparams, "n_audio_to_save"):
-                if self.hparams.n_audio_to_save > 0:
-                    self.save_audio(snt_id[0], mixture, targets, predictions)
-                    self.hparams.n_audio_to_save += -1
-            else:
-                self.save_audio(snt_id[0], mixture, targets, predictions)
 
         return loss.detach()
 
@@ -537,15 +536,20 @@ class Separation(sb.Brain):
                     )
 
                 predictions.append(prediction)
-                print(prediction.shape)
+                # print(prediction.shape)
                 del audio, prediction
                 start += step
 
-            predictions = torch.cat(predictions, dim=1).squeeze
+            predictions = torch.cat(predictions, dim=1).squeeze()
             predictions = predictions.permute(
-                2, 1, 0
-            )  # (sources, channels, samples)
+                2, 0, 1
+            )  # (sources, samples, channels)
             predictions = predictions.detach().cpu().numpy()
+
+            source_names = ["vocals", "bass", "drums", "other"]
+            estimates = {}
+            for j, name in enumerate(source_names):
+                estimates[name] = predictions[j]
 
             output_path = os.path.join(results_path, track.name)
 
@@ -554,19 +558,17 @@ class Separation(sb.Brain):
 
             print("Processing... {}".format(track.name), file=sys.stderr)
             print(track.name, file=fp)
-            for target, estimate in zip(
-                ["vocals", "bass", "drums", "others"], predictions
-            ):
+            for target, estimate in estimates.items():
                 sf.write(
                     os.path.join(output_path, target) + ".wav", estimate, rate
                 )
 
-            track_scores = museval.eval_mus_track(track, predictions)
+            track_scores = museval.eval_mus_track(track, estimates)
             results.add_track(track_scores.df)
             print(track_scores, file=sys.stderr)
             print(track_scores, file=fp)
 
-            del predictions
+            del estimates
 
         print(results, file=sys.stderr)
         print(results, file=fp)
@@ -812,5 +814,5 @@ if __name__ == "__main__":
         )
 
     # Eval
-    separator.evaluate(test_data, min_key="loss")
-    # separator.save_results(results_path=hparams["save_results"])
+    # separator.evaluate(test_data, min_key="loss")
+    separator.save_results(results_path=hparams["save_results"])
