@@ -81,6 +81,11 @@ class Separation(sb.Brain):
                     mix, targets, targets_e = self.cut_signals(
                         mix, targets, targets_e
                     )
+                
+                if self.hparams.rand_choice:
+                    mix, targets, targets_e, ids = self.rand_choice(
+                        mix, targets, targets_e, ids
+                    )
 
         # Separation
         Batch, Time, Spk = targets.shape
@@ -93,18 +98,34 @@ class Separation(sb.Brain):
         mix_w = self.hparams.Encoder(X)
         C, mid, spec = self.hparams.SpkNet(X_est)
         est_mask = self.hparams.MaskNet(mix_w, C)
-        sep_h = mix_w * est_mask
         _, N, L = mix_w.shape
-        sep_h = sep_h.view(Batch, Spk, N, L).permute(1, 0, 2, 3).contiguous()
+        if isinstance(est_mask, list):
+            est_source = []
+            for est_m in est_mask:
+                sep_h = mix_w * est_m
+                sep_h = sep_h.view(Batch, Spk, N, L).permute(1, 0, 2, 3).contiguous()
 
-        # Decoding
-        est_source = torch.cat(
-            [
-                self.hparams.Decoder(sep_h[i]).unsqueeze(-1)
-                for i in range(self.hparams.num_spks)
-            ],
-            dim=-1,
-        )
+                # Decoding
+                est_s = torch.cat(
+                    [
+                        self.hparams.Decoder(sep_h[i]).unsqueeze(-1)
+                        for i in range(self.hparams.num_spks)
+                    ],
+                    dim=-1,
+                )
+                est_source.append(est_s)
+        else:
+            sep_H = mix_w * est_mask
+            sep_H = sep_H.view(Batch, Spk, N, L).permute(1, 0, 2, 3).contiguous()
+
+            # Decoding
+            est_source = torch.cat(
+                [
+                    self.hparams.Decoder(sep_h[i]).unsqueeze(-1)
+                    for i in range(self.hparams.num_spks)
+                ],
+                dim=-1,
+            )
 
         est_spec = self.hparams.AutoEncoder(mid)
         _, N, L = est_spec.shape
@@ -116,11 +137,19 @@ class Separation(sb.Brain):
 
         # T changed after conv1d in encoder, fix it here
         T_origin = mix.size(1)
-        T_est = est_source.size(1)
-        if T_origin > T_est:
-            est_source = F.pad(est_source, (0, 0, 0, T_origin - T_est))
+        if isinstance(est_source, list):
+            for i in range(len(est_source)):
+                T_est = est_source[i].size(1)
+                if T_origin > T_est:
+                    est_source[i] = F.pad(est_source[i], (0, 0, 0, T_origin - T_est))
+                else:
+                    est_source[i] = est_source[i][:, :T_origin, :]
         else:
-            est_source = est_source[:, :T_origin, :]
+            T_est = est_source.size(1)
+            if T_origin > T_est:
+                est_source = F.pad(est_source, (0, 0, 0, T_origin - T_est))
+            else:
+                est_source = est_source[:, :T_origin, :]
 
         return est_source, targets, est_spec, spec, pred_spks, ids
 
@@ -134,10 +163,11 @@ class Separation(sb.Brain):
         ids,
         weight,
         kind,
+        stage
     ):
         """Computes the sinr loss"""
         return self.hparams.loss(
-            targets, predictions, pred_spec, spec, pred_spks, ids, weight, kind
+            targets, predictions, pred_spec, spec, pred_spks, ids, weight, kind, stage
         )
 
     def fit_batch(self, batch):
@@ -172,6 +202,7 @@ class Separation(sb.Brain):
                     ids,
                     self.hparams.loss_weight,
                     self.hparams.loss_kind,
+                    "TRAIN"
                 )
 
                 if isinstance(loss_total, dict):
@@ -231,6 +262,7 @@ class Separation(sb.Brain):
                 ids,
                 self.hparams.loss_weight,
                 self.hparams.loss_kind,
+                "TRAIN"
             )
 
             if isinstance(loss_total, dict):
@@ -253,23 +285,29 @@ class Separation(sb.Brain):
                 loss < self.hparams.loss_upper_lim and loss.nelement() > 0
             ):  # the fix for computation
 
-                # normalize the loss by gradient_accumulation step
-                (loss / self.hparams.gradient_accumulation).backward()
+                # # normalize the loss by gradient_accumulation step
+                # (loss / self.hparams.gradient_accumulation).backward()
 
+                # if self.hparams.clip_grad_norm >= 0:
+                #     torch.nn.utils.clip_grad_norm_(
+                #         self.modules.parameters(), self.hparams.clip_grad_norm
+                #     )
+
+                # if self.step % self.hparams.gradient_accumulation == 0:
+                #     # gradient clipping & early stop if loss is not fini
+                #     self.check_gradients(loss)
+
+                #     self.optimizer.step()
+
+                #     # anneal lr every update
+                #     self.hparams.noam_annealing(self.optimizer)
+
+                loss.backward()
                 if self.hparams.clip_grad_norm >= 0:
                     torch.nn.utils.clip_grad_norm_(
                         self.modules.parameters(), self.hparams.clip_grad_norm
                     )
-
-                if self.step % self.hparams.gradient_accumulation == 0:
-                    # gradient clipping & early stop if loss is not fini
-                    self.check_gradients(loss)
-
-                    self.optimizer.step()
-                    self.optimizer.zero_grad()
-
-                    # anneal lr every update
-                    self.hparams.noam_annealing(self.optimizer)
+                self.optimizer.step()
             else:
                 self.nonfinite_count += 1
                 logger.info(
@@ -283,16 +321,18 @@ class Separation(sb.Brain):
         if isinstance(loss_total, dict):
             for key in loss_total.keys():
                 loss_total[key] = loss_total[key].detach().cpu()
+        else:
+            loss_total = loss_total.detach().cpu()
         return loss_total
 
-    def threshold_byloss(self, loss):
+    def threshold_byloss(self, _loss):
         if self.hparams.threshold_byloss:
             th = self.hparams.threshold
-            l_to_keep = loss[loss > th]
+            l_to_keep = _loss[_loss > th]
             if l_to_keep.nelement() > 0:
                 l_total = l_to_keep.mean()
         else:
-            l_total = loss.mean()
+            l_total = _loss.mean()
         return l_total
 
     def evaluate_batch(self, batch, stage):
@@ -314,7 +354,7 @@ class Separation(sb.Brain):
                 pred_spks,
                 ids,
             ) = self.compute_forward(
-                mixture, targets, targets_e, ids, sb.Stage.TRAIN
+                mixture, targets, targets_e, ids, stage
             )
             loss = self.compute_objectives(
                 predictions,
@@ -325,6 +365,7 @@ class Separation(sb.Brain):
                 ids,
                 1,
                 self.hparams.loss_kind,
+                "TEST"
             )
             loss = loss.mean()
         # Manage audio file saving
@@ -471,6 +512,48 @@ class Separation(sb.Brain):
         ]
         return mixture, targets, targets_e
 
+    def rand_choice(self, mix, targets, targets_e, ids):
+        """
+        This function randomly switches the s1 signal and s2 signal or estimated and source
+        """
+        if np.random.choice([True, False], p=[0.5, 0.5]):
+            targets = torch.cat(
+                [
+                    targets[...,1].unsqueeze(-1), targets[...,0].unsqueeze(-1)
+                ],
+                dim=-1,
+            )
+            targets_e = torch.cat(
+                [
+                    targets_e[...,1].unsqueeze(-1), targets_e[...,0].unsqueeze(-1)
+                ],
+                dim=-1,
+            )
+            ids = torch.cat(
+                [
+                    ids[...,1].unsqueeze(-1), ids[...,0].unsqueeze(-1)
+                ],
+                dim=-1,
+            )
+
+            if np.random.choice([True, False], p=[self.hparams.rand_ori_rate, 1 - self.hparams.rand_ori_rate]):
+                targets_e = torch.cat(
+                    [
+                        targets[...,0].unsqueeze(-1), targets_e[...,1].unsqueeze(-1)
+                    ],
+                    dim=-1,
+                )
+
+            if np.random.choice([True, False], p=[self.hparams.rand_ori_rate, 1 - self.hparams.rand_ori_rate]):
+                targets_e = torch.cat(
+                    [
+                        targets_e[...,0].unsqueeze(-1), targets[...,1].unsqueeze(-1)
+                    ],
+                    dim=-1,
+                )
+        
+        return mix, targets, targets_e, ids
+
     def reset_layer_recursively(self, layer):
         """Reinitializes the parameters of the neural networks"""
         if hasattr(layer, "reset_parameters"):
@@ -497,7 +580,7 @@ class Separation(sb.Brain):
         csv_columns = ["snt_id", "sdr", "sdr_i", "si-snr", "si-snr_i"]
 
         test_loader = sb.dataio.dataloader.make_dataloader(
-            test_data, **self.hparams.dataloader_opts
+            test_data, **self.hparams.testloader_opts
         )
 
         with open(save_file, "w") as results_csv:
@@ -512,16 +595,20 @@ class Separation(sb.Brain):
                     mixture, mix_len = batch.mix_sig
                     snt_id = batch.id
                     targets = [batch.s1_sig, batch.s2_sig]
+                    targets_e = [batch.s1_e_sig, batch.s2_e_sig]
+                    ids = [batch.s1_ID, batch.s2_ID]
                     if self.hparams.num_spks == 3:
                         targets.append(batch.s3_sig)
 
                     with torch.no_grad():
-                        predictions, targets = self.compute_forward(
-                            batch.mix_sig, targets, sb.Stage.TEST
+                        predictions, targets, est_spec, spec, pred_spks, ids = self.compute_forward(
+                            batch.mix_sig, targets, targets_e, ids, sb.Stage.TEST
                         )
 
                     # Compute SI-SNR
-                    sisnr = self.compute_objectives(predictions, targets)
+                    sisnr = self.compute_objectives(
+                        predictions, targets, est_spec, spec, pred_spks, ids, 1.0, self.hparams.loss_kind, "TEST"
+                    )
 
                     # Compute SI-SNR improvement
                     mixture_signal = torch.stack(
@@ -529,7 +616,7 @@ class Separation(sb.Brain):
                     )
                     mixture_signal = mixture_signal.to(targets.device)
                     sisnr_baseline = self.compute_objectives(
-                        mixture_signal, targets
+                        mixture_signal, targets, est_spec, spec, pred_spks, ids, 1.0, self.hparams.loss_kind, "TEST"
                     )
                     sisnr_i = sisnr - sisnr_baseline
 

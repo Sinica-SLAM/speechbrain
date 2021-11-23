@@ -626,7 +626,7 @@ class SBRNNBlock(nn.Module):
     >>> rnn = SBRNNBlock(64, 100, 1, bidirectional=True)
     >>> x = rnn(x)
     >>> x.shape
-    torch.Size([10, 100, 200])
+    torch.Size([10, 100, 100])
     """
 
     def __init__(
@@ -644,7 +644,7 @@ class SBRNNBlock(nn.Module):
         hidden_channels = hidden_channels * cond_group
         input_size = input_size * cond_group
         self.mdl = getattr(SBRNN, rnn_type)(
-            hidden_channels,
+            hidden_channels // 2 if bidirectional else hidden_channels,
             input_size=input_size,
             num_layers=num_layers,
             dropout=dropout,
@@ -825,27 +825,15 @@ class Dual_Computation_Block(nn.Module):
 
         # Linear
         if linear_layer_after_inter_intra:
-            if isinstance(intra_mdl, SBRNNBlock):
-                self.intra_linear = Linear(
-                    out_channels * cond_group,
-                    input_size=2 * out_channels * cond_group,
-                )
-            else:
-                self.intra_linear = Linear(
-                    out_channels * cond_group,
-                    input_size=out_channels * cond_group,
-                )
+            self.intra_linear = Linear(
+                out_channels * cond_group,
+                input_size=out_channels * cond_group,
+            )
 
-            if isinstance(inter_mdl, SBRNNBlock):
-                self.inter_linear = Linear(
-                    out_channels * cond_group,
-                    input_size=2 * out_channels * cond_group,
-                )
-            else:
-                self.inter_linear = Linear(
-                    out_channels * cond_group,
-                    input_size=out_channels * cond_group,
-                )
+            self.inter_linear = Linear(
+                out_channels * cond_group,
+                input_size=out_channels * cond_group,
+            )
 
         # Set conditional layers
         self.group = cond_group
@@ -1096,6 +1084,7 @@ class DualPath_Model(nn.Module):
         dim_cond=0,
         use_adain=False,
         use_affine=False,
+        output_layer=False,
         dropout=0.1,
         skip_around_intra=True,
         linear_layer_after_inter_intra=True,
@@ -1109,6 +1098,7 @@ class DualPath_Model(nn.Module):
         self.norm = select_norm(norm, in_channels, 3)
         self.conv1d = nn.Conv1d(in_channels, out_channels, 1, bias=False)
         self.use_global_pos_enc = use_global_pos_enc
+        self.output_layer = output_layer
 
         if self.use_global_pos_enc:
             self.pos_enc = PositionalEncoding(max_length)
@@ -1181,23 +1171,48 @@ class DualPath_Model(nn.Module):
         # [B_size*spks, N, K, S]
         x, gap = self._Segmentation(x, self.K)
 
-        # [B_size*spks, N, K, S]
-        for i in range(self.num_layers):
-            x = self.dual_mdl[i](x, C)
+        if self.output_layer:
+            Xs = []
+            output_Xs = []
+            # [B_size*spks, N, K, S]
+            for i in range(self.num_layers):
+                x = self.dual_mdl[i](x, C)
+                Xs.append(x)
 
-        # [B_size*spks, N, K, S]
-        x = self.prelu(x)
-        x = self.conv2d(x)
+            for x in Xs:
+                # [B_size*spks, N, K, S]
+                x = self.prelu(x)
+                x = self.conv2d(x)
 
-        # [B*spks, N, L]
-        x = self._over_add(x, gap)
-        x = self.output(x) * self.output_gate(x)
+                # [B*spks, N, L]
+                x = self._over_add(x, gap)
+                x = self.output(x) * self.output_gate(x)
 
-        # [B*spks, N, L]
-        x = self.end_conv1x1(x)
-        x = self.activation(x)
+                # [B*spks, N, L]
+                x = self.end_conv1x1(x)
+                x = self.activation(x)
 
-        return x
+                output_Xs.append(x)
+
+            return output_Xs
+        else:
+            # [B_size*spks, N, K, S]
+            for i in range(self.num_layers):
+                x = self.dual_mdl[i](x, C)
+
+            # [B_size*spks, N, K, S]
+            x = self.prelu(x)
+            x = self.conv2d(x)
+
+            # [B*spks, N, L]
+            x = self._over_add(x, gap)
+            x = self.output(x) * self.output_gate(x)
+
+            # [B*spks, N, L]
+            x = self.end_conv1x1(x)
+            x = self.activation(x)
+
+            return x
 
     def _padding(self, input, K):
         """Padding the audio times.

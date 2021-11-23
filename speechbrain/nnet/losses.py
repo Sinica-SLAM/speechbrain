@@ -1098,7 +1098,7 @@ def nll_loss_kd(
 
 
 def dpfn_loss(
-    targets, predictions, pred_spec, spec, pred_spks, ids, weight, kind
+    targets, predictions, pred_spec, spec, pred_spks, ids, weight, kind, stage
 ):
     """
     Arguments
@@ -1111,9 +1111,24 @@ def dpfn_loss(
     loss: [B]
     """
     targets = targets.permute(1, 0, 2).contiguous()
-    predictions = predictions.permute(1, 0, 2).contiguous()
-    si_snr = cal_si_snr(targets, predictions).squeeze(0)
-    si_snr = torch.mean(si_snr, -1)
+    if isinstance(predictions, list):
+        if stage == "TRAIN":
+            si_snr = torch.zeros(targets.shape[0])
+            for prediction in predictions:
+                prediction = prediction.permute(1, 0, 2).contiguous()
+                _si_snr = cal_si_snr(targets, prediction).squeeze(0)
+                _si_snr = torch.mean(_si_snr, -1)
+                si_snr += _si_snr
+            si_snr /= len(predictions)
+        else:
+            prediction = predictions[-1]
+            prediction = prediction.permute(1, 0, 2).contiguous()
+            si_snr = cal_si_snr(targets, prediction).squeeze(0)
+            si_snr = torch.mean(si_snr, -1)
+    else:
+        predictions = predictions.permute(1, 0, 2).contiguous()
+        si_snr = cal_si_snr(targets, predictions).squeeze(0)
+        si_snr = torch.mean(si_snr, -1)
 
     if weight < 1:
         B, spk, N, L = spec.shape
