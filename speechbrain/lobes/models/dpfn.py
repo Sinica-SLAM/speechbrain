@@ -826,13 +826,11 @@ class Dual_Computation_Block(nn.Module):
         # Linear
         if linear_layer_after_inter_intra:
             self.intra_linear = Linear(
-                out_channels * cond_group,
-                input_size=out_channels * cond_group,
+                out_channels * cond_group, input_size=out_channels * cond_group,
             )
 
             self.inter_linear = Linear(
-                out_channels * cond_group,
-                input_size=out_channels * cond_group,
+                out_channels * cond_group, input_size=out_channels * cond_group,
             )
 
         # Set conditional layers
