@@ -1113,7 +1113,7 @@ def dpfn_loss(
     targets = targets.permute(1, 0, 2).contiguous()
     if isinstance(predictions, list):
         if stage == "TRAIN":
-            si_snr = torch.zeros(targets.shape[0])
+            si_snr = torch.zeros(targets.shape[1], device="cuda")
             for prediction in predictions:
                 prediction = prediction.permute(1, 0, 2).contiguous()
                 _si_snr = cal_si_snr(targets, prediction).squeeze(0)

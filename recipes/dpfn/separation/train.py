@@ -81,7 +81,7 @@ class Separation(sb.Brain):
                     mix, targets, targets_e = self.cut_signals(
                         mix, targets, targets_e
                     )
-                
+
                 if self.hparams.rand_choice:
                     mix, targets, targets_e, ids = self.rand_choice(
                         mix, targets, targets_e, ids
@@ -103,7 +103,11 @@ class Separation(sb.Brain):
             est_source = []
             for est_m in est_mask:
                 sep_h = mix_w * est_m
-                sep_h = sep_h.view(Batch, Spk, N, L).permute(1, 0, 2, 3).contiguous()
+                sep_h = (
+                    sep_h.view(Batch, Spk, N, L)
+                    .permute(1, 0, 2, 3)
+                    .contiguous()
+                )
 
                 # Decoding
                 est_s = torch.cat(
@@ -115,8 +119,10 @@ class Separation(sb.Brain):
                 )
                 est_source.append(est_s)
         else:
-            sep_H = mix_w * est_mask
-            sep_H = sep_H.view(Batch, Spk, N, L).permute(1, 0, 2, 3).contiguous()
+            sep_h = mix_w * est_mask
+            sep_h = (
+                sep_h.view(Batch, Spk, N, L).permute(1, 0, 2, 3).contiguous()
+            )
 
             # Decoding
             est_source = torch.cat(
@@ -141,7 +147,9 @@ class Separation(sb.Brain):
             for i in range(len(est_source)):
                 T_est = est_source[i].size(1)
                 if T_origin > T_est:
-                    est_source[i] = F.pad(est_source[i], (0, 0, 0, T_origin - T_est))
+                    est_source[i] = F.pad(
+                        est_source[i], (0, 0, 0, T_origin - T_est)
+                    )
                 else:
                     est_source[i] = est_source[i][:, :T_origin, :]
         else:
@@ -163,11 +171,19 @@ class Separation(sb.Brain):
         ids,
         weight,
         kind,
-        stage
+        stage,
     ):
         """Computes the sinr loss"""
         return self.hparams.loss(
-            targets, predictions, pred_spec, spec, pred_spks, ids, weight, kind, stage
+            targets,
+            predictions,
+            pred_spec,
+            spec,
+            pred_spks,
+            ids,
+            weight,
+            kind,
+            stage,
         )
 
     def fit_batch(self, batch):
@@ -202,7 +218,7 @@ class Separation(sb.Brain):
                     ids,
                     self.hparams.loss_weight,
                     self.hparams.loss_kind,
-                    "TRAIN"
+                    "TRAIN",
                 )
 
                 if isinstance(loss_total, dict):
@@ -262,7 +278,7 @@ class Separation(sb.Brain):
                 ids,
                 self.hparams.loss_weight,
                 self.hparams.loss_kind,
-                "TRAIN"
+                "TRAIN",
             )
 
             if isinstance(loss_total, dict):
@@ -353,9 +369,7 @@ class Separation(sb.Brain):
                 spec,
                 pred_spks,
                 ids,
-            ) = self.compute_forward(
-                mixture, targets, targets_e, ids, stage
-            )
+            ) = self.compute_forward(mixture, targets, targets_e, ids, stage)
             loss = self.compute_objectives(
                 predictions,
                 targets,
@@ -365,7 +379,7 @@ class Separation(sb.Brain):
                 ids,
                 1,
                 self.hparams.loss_kind,
-                "TEST"
+                "TEST",
             )
             loss = loss.mean()
         # Manage audio file saving
@@ -518,40 +532,44 @@ class Separation(sb.Brain):
         """
         if np.random.choice([True, False], p=[0.5, 0.5]):
             targets = torch.cat(
-                [
-                    targets[...,1].unsqueeze(-1), targets[...,0].unsqueeze(-1)
-                ],
+                [targets[..., 1].unsqueeze(-1), targets[..., 0].unsqueeze(-1)],
                 dim=-1,
             )
             targets_e = torch.cat(
                 [
-                    targets_e[...,1].unsqueeze(-1), targets_e[...,0].unsqueeze(-1)
+                    targets_e[..., 1].unsqueeze(-1),
+                    targets_e[..., 0].unsqueeze(-1),
                 ],
                 dim=-1,
             )
             ids = torch.cat(
-                [
-                    ids[...,1].unsqueeze(-1), ids[...,0].unsqueeze(-1)
-                ],
-                dim=-1,
+                [ids[..., 1].unsqueeze(-1), ids[..., 0].unsqueeze(-1)], dim=-1,
             )
 
-            if np.random.choice([True, False], p=[self.hparams.rand_ori_rate, 1 - self.hparams.rand_ori_rate]):
+            if np.random.choice(
+                [True, False],
+                p=[self.hparams.rand_ori_rate, 1 - self.hparams.rand_ori_rate],
+            ):
                 targets_e = torch.cat(
                     [
-                        targets[...,0].unsqueeze(-1), targets_e[...,1].unsqueeze(-1)
+                        targets[..., 0].unsqueeze(-1),
+                        targets_e[..., 1].unsqueeze(-1),
                     ],
                     dim=-1,
                 )
 
-            if np.random.choice([True, False], p=[self.hparams.rand_ori_rate, 1 - self.hparams.rand_ori_rate]):
+            if np.random.choice(
+                [True, False],
+                p=[self.hparams.rand_ori_rate, 1 - self.hparams.rand_ori_rate],
+            ):
                 targets_e = torch.cat(
                     [
-                        targets_e[...,0].unsqueeze(-1), targets[...,1].unsqueeze(-1)
+                        targets_e[..., 0].unsqueeze(-1),
+                        targets[..., 1].unsqueeze(-1),
                     ],
                     dim=-1,
                 )
-        
+
         return mix, targets, targets_e, ids
 
     def reset_layer_recursively(self, layer):
@@ -601,13 +619,32 @@ class Separation(sb.Brain):
                         targets.append(batch.s3_sig)
 
                     with torch.no_grad():
-                        predictions, targets, est_spec, spec, pred_spks, ids = self.compute_forward(
-                            batch.mix_sig, targets, targets_e, ids, sb.Stage.TEST
+                        (
+                            predictions,
+                            targets,
+                            est_spec,
+                            spec,
+                            pred_spks,
+                            ids,
+                        ) = self.compute_forward(
+                            batch.mix_sig,
+                            targets,
+                            targets_e,
+                            ids,
+                            sb.Stage.TEST,
                         )
 
                     # Compute SI-SNR
                     sisnr = self.compute_objectives(
-                        predictions, targets, est_spec, spec, pred_spks, ids, 1.0, self.hparams.loss_kind, "TEST"
+                        predictions,
+                        targets,
+                        est_spec,
+                        spec,
+                        pred_spks,
+                        ids,
+                        1.0,
+                        self.hparams.loss_kind,
+                        "TEST",
                     )
 
                     # Compute SI-SNR improvement
@@ -616,7 +653,15 @@ class Separation(sb.Brain):
                     )
                     mixture_signal = mixture_signal.to(targets.device)
                     sisnr_baseline = self.compute_objectives(
-                        mixture_signal, targets, est_spec, spec, pred_spks, ids, 1.0, self.hparams.loss_kind, "TEST"
+                        mixture_signal,
+                        targets,
+                        est_spec,
+                        spec,
+                        pred_spks,
+                        ids,
+                        1.0,
+                        self.hparams.loss_kind,
+                        "TEST",
                     )
                     sisnr_i = sisnr - sisnr_baseline
 
