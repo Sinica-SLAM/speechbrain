@@ -2,6 +2,7 @@
 huggingface_hub>=0.0.6
 hyperpyyaml>=0.0.1
 joblib>=0.14.1
+julius>=0.2.6
 numpy>=1.17.0
 packaging
 pre-commit>=2.3.0

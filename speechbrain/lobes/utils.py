@@ -20,6 +20,24 @@ def capture_init(init):
     return __init__
 
 
+def center_trim(tensor, reference):
+    """
+    Center trim `tensor` with respect to `reference`, along the last dimension.
+    `reference` can also be a number, representing the length to trim to.
+    If the size difference != 0 mod 2, the extra sample is removed on the right side.
+    """
+    if hasattr(reference, "size"):
+        reference = reference.size(-1)
+    delta = tensor.size(-1) - reference
+    if delta < 0:
+        raise ValueError(
+            "tensor must be larger than reference. " f"Delta is {delta}."
+        )
+    if delta:
+        tensor = tensor[..., delta // 2 : -(delta - delta // 2)]
+    return tensor
+
+
 def overlap_and_add(signal, frame_step):
     """Reconstructs a signal from a framed representation.
     Adds potentially overlapping frames of a signal with shape
