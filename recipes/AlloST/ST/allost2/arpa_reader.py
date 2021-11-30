@@ -134,7 +134,15 @@ def find_all_possible_vocabs(
         for symbol in path:
             vocab_length = len(symbol[0].split(" "))
             results[index].append(symbol[0])
-            scores[index] += [symbol[1]] * vocab_length
+
+            # Assume ɒ ʝ a is a segmentation
+            # so, the global score of a is p(ɒ ʝ a) = p(a | ɒ ʝ)
+            # hence the global score is only assign to "a" not this segmentation
+            # it is also the reason that "ɒ" "ʝ" are assigned to be 0
+            score = [0] * (vocab_length - 1) + [symbol[1]]
+            scores[index] += score
+            # print(score)
+            # print([symbol[1]] * vocab_length)
 
         phone_index = list(
             map(lambda p: [i for i in range(p[2], p[3] + 1)], path)
@@ -236,10 +244,22 @@ def sequence2scores(
 
 
 if __name__ == "__main__":
-    sequence = "ɒ ʝ a iː o"
+    sequence = (
+        "<s> ð ə m a sː ɪ a ð o n f uə k ʌ ɴ ɒ l o s ɾʲ e ɡ i n iː i k o ʁ </s>"
+    )
     # sequence = "b̞ uə e l ɪ s a l̪ ɪ s"
     ngram_scores = read_arpa("../../LM/save/lm.arpa")
 
-    scores = sequence2group_index(sequence=sequence, ngram_scores=ngram_scores)
+    group_id = sequence2group_index(
+        sequence=sequence, ngram_scores=ngram_scores, threshold=-5
+    )
+    scores = sequence2scores(
+        sequence=sequence, ngram_scores=ngram_scores, threshold=-5,
+    )
+
     print(sequence)
-    print(scores)
+    for id in group_id:
+        print(f"{id}")
+
+    for score in scores:
+        print(f"{score}")

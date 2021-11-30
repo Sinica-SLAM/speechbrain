@@ -38,6 +38,16 @@ from espnet.nets.pytorch_backend.transformer.subsampling import (
 )
 
 
+class MultipleInputsSequential(torch.nn.Sequential):
+    def forward(self, *inputs):
+        for module in self._modules.values():
+            if type(inputs) == tuple:
+                inputs = module(*inputs)
+            else:
+                inputs = module(inputs)
+        return inputs
+
+
 class DualEncoder(torch.nn.Module):
     """Conformer encoder module.
     Args:
@@ -95,7 +105,7 @@ class DualEncoder(torch.nn.Module):
         is_share_weights=False,
         phone_embed_type: str = "embed",
         ngram: int = 3,
-        global_score_weight: float = 0.1,
+        global_scores_weight: float = 0.1,
         down_sample_factors: int = 1,
         is_score_consensus_attention: bool = True,
     ):
@@ -148,6 +158,7 @@ class DualEncoder(torch.nn.Module):
         else:
             raise ValueError("unknown input_layer: " + input_layer)
 
+        self.phone_embed_type = phone_embed_type
         if phone_embed_type == "embed":
             self.auxiliary_embed = torch.nn.Sequential(
                 torch.nn.Embedding(
@@ -166,20 +177,20 @@ class DualEncoder(torch.nn.Module):
                     auxiliary_idim,
                     ngram,
                     down_sample_factors=down_sample_factors,
-                    global_score_weight=is_score_consensus_attention,
+                    is_score_consensus_attention=is_score_consensus_attention,
                 ),
                 pos_enc_class(attention_dim, positional_dropout_rate),
             )
         elif phone_embed_type == "global":
             from speechbrain.lobes.models.GBST import GlobalGBST
 
-            self.auxiliary_embed = torch.nn.Sequential(
+            self.auxiliary_embed = MultipleInputsSequential(
                 GlobalGBST(
                     attention_dim,
                     auxiliary_idim,
                     ngram,
                     padding_idx=auxiliary_padding_idx,
-                    global_score_weight=global_score_weight,
+                    global_scores_weight=global_scores_weight,
                 ),
                 pos_enc_class(attention_dim, positional_dropout_rate),
             )
@@ -293,7 +304,9 @@ class DualEncoder(torch.nn.Module):
         self.normalize_before = normalize_before
         self.after_norm = LayerNorm(attention_dim)
 
-    def forward(self, xs, masks, phone, phone_mask):
+    def forward(
+        self, xs, masks, phone, phone_mask, group_id=None, global_scores=None
+    ):
         """Encode input sequence.
         Args:
             xs (torch.Tensor): Input tensor (#batch, time, idim).
@@ -302,7 +315,10 @@ class DualEncoder(torch.nn.Module):
             torch.Tensor: Output tensor (#batch, time, attention_dim).
             torch.Tensor: Mask tensor (#batch, time).
         """
-        phone = self.auxiliary_embed(phone)
+        if self.phone_embed_type == "global":
+            phone = self.auxiliary_embed(phone, group_id, global_scores)
+        else:
+            phone = self.auxiliary_embed(phone)
 
         if self.is_share_weights:
             auxiliary_encoders = self.encoders[-self.auxiliary_num_blocks :]

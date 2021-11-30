@@ -53,7 +53,7 @@ class GBST(nn.Module):
         )
 
     def forward(self, x: torch.LongTensor):
-        x_mask = x.eq(self.pad_index).unsqueeze(-1).to(x.device)
+        x_mask = x.eq(self.padding_idx).unsqueeze(-1).to(x.device)
         embed_x, x_mask = self.gbst(x, x_mask)
 
         return embed_x
@@ -65,7 +65,7 @@ class GlobalGBST(nn.Module):
         embedding_size: int,
         dictionary_size: int,
         ngram: int,
-        pad_index: int = 0,
+        padding_idx: int = 0,
         global_scores_weight: float = 0.0,
     ):
         super().__init__()
@@ -78,7 +78,7 @@ class GlobalGBST(nn.Module):
 
         self.ngram = ngram
         self.blocks_size = sum([i for i in range(1, ngram + 1)])
-        self.pad_index = pad_index
+        self.padding_idx = padding_idx
         self.global_scores_weight = global_scores_weight
         if self.global_scores_weight > 0:
             self.global_score_function = nn.Linear(
@@ -100,13 +100,15 @@ class GlobalGBST(nn.Module):
 
         # Calculate sequence masks
         sequence_mask = (
-            sequence.eq(self.pad_index).unsqueeze(-1).to(sequence.device)
+            sequence.eq(self.padding_idx).unsqueeze(-1).to(sequence.device)
         )
         blocks_mask = torch.cat((sequence.unsqueeze(1), group_id), dim=1)
 
         # Calculate positions for each token
         embed_sequence = F.pad(
-            embed_sequence, pad=(0, 0, 0, self.ngram - 1), value=self.pad_index,
+            embed_sequence,
+            pad=(0, 0, 0, self.ngram - 1),
+            value=self.padding_idx,
         )
 
         embed_sequence = embed_sequence.permute(0, 2, 1)
@@ -136,7 +138,7 @@ class GlobalGBST(nn.Module):
             # Mask out zeros since they are not the vocabs
             sequence_in_layer_mask = (
                 group_id_in_layer.unsqueeze(-1)
-                .eq(self.pad_index)
+                .eq(self.padding_idx)
                 .to(sequence.device)
             )
             embed_sequence_in_layer = embed_sequence_in_layer.masked_fill(
@@ -149,7 +151,7 @@ class GlobalGBST(nn.Module):
                 # Replac the pad index to group id
                 group_id_in_layer_in_batch = group_id_in_layer[batch]
                 group_id_in_layer_in_batch[
-                    group_id_in_layer_in_batch == self.pad_index
+                    group_id_in_layer_in_batch == self.padding_idx
                 ] = pad_group_id[batch]
                 group_id_in_layer_in_batch = group_id_in_layer_in_batch - 1
                 group_id_in_layer[batch] = group_id_in_layer_in_batch
@@ -171,7 +173,7 @@ class GlobalGBST(nn.Module):
                 pad_length = block_sequence_length - group_frequency.shape[0]
                 # Pad upsampled sequences to original lengths
                 group_frequency = F.pad(
-                    group_frequency, pad=(0, pad_length), value=self.pad_index
+                    group_frequency, pad=(0, pad_length), value=self.padding_idx
                 )
                 block_sequence_in_batch = torch.repeat_interleave(
                     blocked_sequence[batch], group_frequency, dim=0
@@ -189,7 +191,9 @@ class GlobalGBST(nn.Module):
 
         # Maske out padded tokens
         blocks_mask = (
-            blocks_mask.permute(0, 2, 1).eq(self.pad_index).to(sequence.device)
+            blocks_mask.permute(0, 2, 1)
+            .eq(self.padding_idx)
+            .to(sequence.device)
         )
         max_neg_value = -torch.finfo(scores.dtype).max
         scores = scores.masked_fill(blocks_mask, max_neg_value)
@@ -198,20 +202,17 @@ class GlobalGBST(nn.Module):
 
         # Fuse the global scores with weight
         if self.global_scores_weight > 0:
-            global_scores = global_scores.permute(0, 2, 1)
-            global_scores_mask = global_scores.eq(self.pad_index).to(
+            global_score_normalizer = torch.logsumexp(
+                global_scores, dim=1, keepdim=True
+            )
+            global_scores_mask = global_scores.eq(self.padding_idx).to(
                 sequence.device
             )
-            global_scores = self.global_score_function(global_scores)
-            global_scores = global_scores.masked_fill(
-                global_scores_mask, max_neg_value
-            )
-            global_scores = global_scores.softmax(dim=2)
-            global_scores = global_scores.unsqueeze(-1)
-            scores = (
-                scores * (1 - self.global_scores_weight)
-                + self.global_scores_weight * global_scores
-            )
+            global_scores = global_scores - global_score_normalizer
+            global_scores = global_scores.masked_fill(global_scores_mask, 0,)
+            global_scores = global_scores.permute(0, 2, 1).unsqueeze(-1)
+
+            scores = scores + self.global_scores_weight * global_scores
 
         # Weighted sum over block representations
         embed_sequence = torch.mul(block_representations, scores).sum(dim=2)

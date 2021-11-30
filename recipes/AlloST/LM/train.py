@@ -8,6 +8,8 @@ from typing import Dict
 import speechbrain as sb
 from hyperpyyaml import load_hyperpyyaml
 
+from speechbrain.utils.distributed import run_on_main
+
 
 def read_json(json_path: str) -> Dict[str, str]:
     """Read the given json file, and return a dictionary"""
@@ -17,11 +19,22 @@ def read_json(json_path: str) -> Dict[str, str]:
     return data
 
 
-def read_train_file(train_text_path: str, data_json: Dict[str, str]):
+def read_train_file(
+    train_text_path: str, data_json: Dict[str, str], phone_tokenizer=None,
+):
     """Read the training text from the given json file"""
     with open(train_text_path, "w+", encoding="utf-8") as train_text_file:
         for value in data_json.values():
-            phone_sequence = value["allosaurus"].strip().lstrip()
+            if phone_tokenizer is not None:
+                allosaurus_for_bpe = (
+                    value["allosaurus_for_bpe"].strip().lstrip()
+                )
+                phone_sequence = phone_tokenizer.encode_as_pieces(
+                    allosaurus_for_bpe
+                )
+                phone_sequence = " ".join(phone_sequence)
+            else:
+                phone_sequence = value["allosaurus"].strip().lstrip()
             train_text_file.write(phone_sequence + "\n")
 
 
@@ -71,9 +84,17 @@ if __name__ == "__main__":
         overrides=overrides,
     )
 
+    phone_tokenizer = None
+    if "phone_pretrainer" in hparams:
+        run_on_main(hparams["phone_pretrainer"].collect_files)
+        hparams["phone_pretrainer"].load_collected(device=run_opts["device"])
+        phone_tokenizer = hparams["phone_tokenizer"]
+
     data_json = read_json(json_path=hparams["data_json_path"])
     read_train_file(
-        train_text_path=hparams["train_text_path"], data_json=data_json,
+        train_text_path=hparams["train_text_path"],
+        data_json=data_json,
+        phone_tokenizer=phone_tokenizer,
     )
 
     create_lexicon(

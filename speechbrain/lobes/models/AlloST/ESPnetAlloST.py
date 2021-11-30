@@ -71,7 +71,7 @@ class E2E(E2ETransformer):
         decoder_fusion_type: str = "vanilla",
         phone_embed_type: str = "embed",
         ngram: int = 3,
-        global_score_weight: float = 0.1,
+        global_scores_weight: float = 0.1,
         down_sample_factors: int = 1,
         is_score_consensus_attention: bool = True,
         sos: int = 1,
@@ -131,7 +131,7 @@ class E2E(E2ETransformer):
             is_share_weights=encoder_share_weights,
             phone_embed_type=phone_embed_type,
             ngram=ngram,
-            global_score_weight=global_score_weight,
+            global_scores_weight=global_scores_weight,
             down_sample_factors=down_sample_factors,
             is_score_consensus_attention=is_score_consensus_attention,
         )
@@ -178,7 +178,16 @@ class E2E(E2ETransformer):
         else:
             AssertionError(f"not support {decoder_fusion_type} yet")
 
-    def forward(self, xs_pad, ilens, ys_pad, ys_pad_phn, phone_lens):
+    def forward(
+        self,
+        xs_pad,
+        ilens,
+        ys_pad,
+        ys_pad_phn,
+        phone_lens,
+        group_id=None,
+        global_scores=None,
+    ):
         """E2E forward.
         :param torch.Tensor xs_pad: batch of padded source sequences (B, Tmax, idim)
         :param torch.Tensor ilens: batch of lengths of source sequences (B)
@@ -198,7 +207,7 @@ class E2E(E2ETransformer):
         )
 
         hs_pad, hs_mask, phone, phone_mask = self.encoder(
-            xs_pad, src_mask, ys_pad_phn, phone_mask
+            xs_pad, src_mask, ys_pad_phn, phone_mask, group_id, global_scores,
         )
 
         # 2. forward decoder
@@ -219,7 +228,13 @@ class E2E(E2ETransformer):
         return hs_pad, hs_mask, pred_pad, pred_mask
 
     def translate(  # noqa: C901
-        self, x, phone_sequence, trans_args, char_list=None,
+        self,
+        x,
+        phone_sequence,
+        trans_args,
+        group_id=None,
+        global_scores=None,
+        char_list=None,
     ):
         """Translate input speech.
         :param ndnarray x: input acoustic feature (B, T, D) or (T, D)
@@ -239,7 +254,7 @@ class E2E(E2ETransformer):
         logging.info("<sos> mark: " + char_list[y])
         logging.info("input lengths: " + str(x.shape[0]))
 
-        h, phone = self.encode(x, phone_sequence)
+        h, phone = self.encode(x, phone_sequence, group_id, global_scores)
 
         h = h.unsqueeze(0)
         phone = phone.unsqueeze(0)
@@ -444,12 +459,14 @@ class E2E(E2ETransformer):
         self.train()
         return ret
 
-    def encode(self, x, phone):
+    def encode(self, x, phone, group_id=None, global_scores=None):
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0)
         phone = torch.as_tensor(phone)
+        group_id = torch.as_tensor(group_id)
+        global_scores = torch.as_tensor(global_scores)
 
         x_enc_output, _, phone_enc_output, _ = self.encoder(
-            x, None, phone, None
+            x, None, phone, None, group_id, global_scores,
         )
         return x_enc_output.squeeze(0), phone_enc_output.squeeze(0)
