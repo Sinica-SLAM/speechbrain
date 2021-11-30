@@ -1177,9 +1177,9 @@ class DualPath_Model(nn.Module):
                 x = self.dual_mdl[i](x, C)
                 Xs.append(x)
 
-            for x in Xs:
+            for _x in Xs:
                 # [B_size*spks, N, K, S]
-                x = self.prelu(x)
+                x = self.prelu(_x)
                 x = self.conv2d(x)
 
                 # [B*spks, N, L]
