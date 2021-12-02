@@ -13,14 +13,17 @@ class BLSTM(nn.Module):
             hidden_size=dim,
             input_size=dim,
         )
-        self.linear = nn.Linear(2 * dim, dim)
+        self.sep_linear = nn.Linear(2 * dim, dim)
+        self.recons_linear = nn.Linear(2 * dim, dim)
 
     def forward(self, x):
         x = x.permute(2, 0, 1)
         x = self.lstm(x)[0]
-        x = self.linear(x)
-        x = x.permute(1, 2, 0)
-        return x
+        sep_code, recons_code = self.sep_linear(x), self.recons_linear(x)
+        sep_code = sep_code.permute(1, 2, 0)
+        recons_code = recons_code.permute(1, 2, 0)
+
+        return sep_code, recons_code
 
 
 def rescale_conv(conv, reference):
@@ -42,13 +45,13 @@ class Encoder(nn.Module):
         self,
         activation,
         ch_scale,
-        audio_channels=2,
-        channels=64,
-        depth=6,
-        rewrite=True,
-        kernel_size=8,
-        stride=4,
-        growth=2.0,
+        audio_channels,
+        channels,
+        depth,
+        rewrite,
+        kernel_size,
+        stride,
+        growth,
     ):
 
         super().__init__()
@@ -84,16 +87,17 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(
         self,
+        sources,
         activation,
         ch_scale,
+        audio_channels,
+        channels,
+        depth,
+        rewrite,
+        kernel_size,
+        stride,
+        growth,
         context,
-        audio_channels=2,
-        channels=64,
-        depth=6,
-        rewrite=True,
-        kernel_size=8,
-        stride=4,
-        growth=2.0,
     ):
 
         super().__init__()
@@ -107,7 +111,7 @@ class Decoder(nn.Module):
             if index > 0:
                 out_channels = in_channels
             else:
-                out_channels = len(self.sources) * audio_channels
+                out_channels = len(sources) * audio_channels
             if rewrite:
                 decode += [
                     nn.Conv1d(channels, ch_scale * channels, context),
@@ -122,7 +126,7 @@ class Decoder(nn.Module):
             in_channels = channels
             channels = int(growth * channels)
 
-    def forward(self, x, saved, skip):
+    def forward(self, x, saved):
         for decode in self.decoder:
             skip = center_trim(saved.pop(-1), x)
             x = x + skip
@@ -134,16 +138,17 @@ class Decoder(nn.Module):
 class Generator(nn.Module):
     def __init__(
         self,
+        sources,
         activation,
         ch_scale,
+        audio_channels,
+        channels,
+        depth,
+        rewrite,
+        kernel_size,
+        stride,
+        growth,
         context,
-        audio_channels=2,
-        channels=64,
-        depth=6,
-        rewrite=True,
-        kernel_size=8,
-        stride=4,
-        growth=2.0,
     ):
 
         super().__init__()
@@ -156,7 +161,7 @@ class Generator(nn.Module):
             if index > 0:
                 out_channels = in_channels
             else:
-                out_channels = len(self.sources) * audio_channels
+                out_channels = len(sources) * audio_channels
             if rewrite:
                 generate += [
                     nn.Conv1d(channels, ch_scale * channels, context),
@@ -171,7 +176,7 @@ class Generator(nn.Module):
             in_channels = channels
             channels = int(growth * channels)
 
-    def forward(self, x, saved, skip):
+    def forward(self, x, saved):
         for generate in self.generator:
             skip = center_trim(saved.pop(-1), x)
             x = x + skip
@@ -197,7 +202,7 @@ class UAE(nn.Module):
         growth=2.0,
         lstm_layers=2,
         context=3,
-        normalize=False,
+        normalize=True,
         samplerate=44100,
         segment_length=4 * 10 * 44100,
     ):
@@ -251,39 +256,50 @@ class UAE(nn.Module):
             ch_scale = 1
 
         self.encoder = Encoder(
-            audio_channels,
-            channels,
-            kernel_size,
-            stride,
             activation,
             ch_scale,
-            growth,
+            audio_channels,
+            channels,
+            depth,
             rewrite,
+            kernel_size,
+            stride,
+            growth,
         )
         self.decoder = Decoder(
-            audio_channels,
-            channels,
-            kernel_size,
-            stride,
+            sources,
             activation,
             ch_scale,
+            audio_channels,
+            channels,
+            depth,
+            rewrite,
+            kernel_size,
+            stride,
             growth,
             context,
-            rewrite,
         )
         self.generator = Generator(
-            audio_channels,
-            channels,
-            kernel_size,
-            stride,
+            sources,
             activation,
             ch_scale,
+            audio_channels,
+            channels,
+            depth,
+            rewrite,
+            kernel_size,
+            stride,
             growth,
             context,
-            rewrite,
         )
 
-        channels = audio_channels
+        in_channels = audio_channels
+
+        for index in range(depth):
+            in_channels = channels
+            channels = int(growth * channels)
+
+        channels = in_channels
 
         if lstm_layers:
             self.lstm = BLSTM(channels, lstm_layers)
@@ -338,16 +354,14 @@ class UAE(nn.Module):
         x, saved = self.encoder(x)
 
         if self.lstm:
-            x = self.lstm(x)
-
-        # Code for 2 branch
-        sep_code, recons_code = x[:], x[:]
+            # Code for 2 branch
+            sep_code, recons_code = self.lstm(x)
 
         # Decoder
-        sep = self.decoder(sep_code, saved)
+        sep = self.decoder(sep_code, saved.copy())
 
         # Generator
-        recons = self.generator(recons_code, saved)
+        recons = self.generator(recons_code, saved.copy())
 
         if self.resample:
             sep = julius.resample_frac(sep, 2, 1)
