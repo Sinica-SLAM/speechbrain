@@ -21,7 +21,7 @@ import torchaudio
 
 from tqdm import tqdm
 from speechbrain.utils.data_utils import get_all_files
-from speechbrain.utils.torch_audio_backend import get_torchaudio_backend
+from speechbrain.utils.torch_audio_backend import check_torchaudio_backend
 from speechbrain.processing.speech_augmentation import Resample
 
 try:
@@ -32,8 +32,7 @@ except ImportError:
     raise ImportError(err_msg)
 
 logger = logging.getLogger(__name__)
-torchaudio_backend = get_torchaudio_backend()
-torchaudio.set_audio_backend(torchaudio_backend)
+torchaudio_backend = check_torchaudio_backend()
 
 es_normalizer = MosesPunctNormalizer(lang="es")
 en_normalizer = MosesPunctNormalizer(lang="en")

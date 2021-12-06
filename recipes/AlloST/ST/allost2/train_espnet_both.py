@@ -162,6 +162,7 @@ class ST(sb.core.Brain):
         # check if we need to switch optimizer
         # if so change the optimizer from Adam to SGD
         self.check_and_reset_optimizer()
+
         with torch.autograd.set_detect_anomaly(True):
             predictions = self.compute_forward(batch, sb.Stage.TRAIN)
             loss = self.compute_objectives(predictions, batch, sb.Stage.TRAIN)
