@@ -323,6 +323,12 @@ class Separation(sb.Brain):
                     torch.nn.utils.clip_grad_norm_(
                         self.modules.parameters(), self.hparams.clip_grad_norm
                     )
+                if isinstance(
+                    self.hparams.lr_scheduler, schedulers.NoamScheduler
+                ):
+                    current_lr, next_lr = self.hparams.lr_scheduler(
+                        self.optimizer
+                    )
                 self.optimizer.step()
             else:
                 self.nonfinite_count += 1
@@ -347,6 +353,10 @@ class Separation(sb.Brain):
             l_to_keep = _loss[_loss > th]
             if l_to_keep.nelement() > 0:
                 l_total = l_to_keep.mean()
+            else:
+                l_total = torch.zeros(1, requires_grad=True).to(
+                    l_to_keep.device
+                )
         else:
             l_total = _loss.mean()
         return l_total
@@ -411,6 +421,10 @@ class Separation(sb.Brain):
                     [self.optimizer], epoch, stage_loss
                 )
                 schedulers.update_learning_rate(self.optimizer, next_lr)
+            elif isinstance(
+                self.hparams.lr_scheduler, schedulers.NoamScheduler
+            ):
+                current_lr, next_lr = self.hparams.lr_scheduler(self.optimizer)
             else:
                 # if we do not use the reducelronplateau, we do not change the lr
                 current_lr = self.hparams.optimizer.optim.param_groups[0]["lr"]
