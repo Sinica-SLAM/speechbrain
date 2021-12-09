@@ -634,6 +634,9 @@ class Separation(sb.Brain):
                             sb.Stage.TEST,
                         )
 
+                    if isinstance(predictions, list):
+                        predictions = predictions[-1]
+
                     # Compute SI-SNR
                     sisnr = self.compute_objectives(
                         predictions,
@@ -716,6 +719,8 @@ class Separation(sb.Brain):
         if not os.path.exists(save_path):
             os.mkdir(save_path)
 
+        if isinstance(predictions, list):
+            predictions = predictions[-1]
         for ns in range(self.hparams.num_spks):
 
             # Estimated source
