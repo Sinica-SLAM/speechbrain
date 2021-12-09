@@ -96,7 +96,8 @@ class Separation(sb.Brain):
         X_est = X_est.flatten(0, 1).unsqueeze(1)
 
         mix_w = self.hparams.Encoder(X)
-        C, mid, spec = self.hparams.SpkNet(X_est)
+        X_est_w = self.hparams.Encoder(X_est.squeeze(1))
+        C, mid, spec = self.hparams.SpkNet(X_est, X_est_w)
         est_mask = self.hparams.MaskNet(mix_w, C)
         _, N, L = mix_w.shape
         if isinstance(est_mask, list):

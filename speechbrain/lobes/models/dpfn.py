@@ -933,7 +933,7 @@ class Dual_Computation_Block(nn.Module):
 
         # [B/G, NG, K, S]
         if self.skip_around_intra:
-            intra = intra + x
+            intra = (intra + x) * math.sqrt(0.5)
 
         # inter RNN
         # [BK/G, S, NG]
@@ -958,7 +958,7 @@ class Dual_Computation_Block(nn.Module):
         if self.norm is not None:
             inter = self.inter_norm(inter)
         # [B/G, NG, K, S]
-        out = inter + intra
+        out = ( inter + intra ) * math.sqrt(0.5)
 
         return out.view(B, N, K, S)
 
@@ -1538,7 +1538,7 @@ class SpkResNet(nn.Module):
             ),
         )
 
-    def forward(self, input):
+    def forward(self, input, input_w):
         """
         Input:
             X: Wav, Size(Batch, 1, Time)
@@ -1549,6 +1549,8 @@ class SpkResNet(nn.Module):
             input = self.stft(input)
         elif self.pre_encoding == "fbank":
             input = self.fbank(input)
+        elif self.pre_encoding == "encoder":
+            input = input_w
         mid = self.nnet(input)
         output = self.post_net(mid)
         return output, mid, input
