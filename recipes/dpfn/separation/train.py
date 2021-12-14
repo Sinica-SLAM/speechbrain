@@ -224,8 +224,8 @@ class Separation(sb.Brain):
 
                 if isinstance(loss_total, dict):
                     loss = (
-                        self.hparams.loss_weight * loss_total["si_snr"]
-                        + (1 - self.hparams.loss_weight)
+                        loss_total["si_snr"]
+                        + self.hparams.loss_weight
                         * loss_total["spk_loss"]
                     )
                 else:
@@ -284,8 +284,8 @@ class Separation(sb.Brain):
 
             if isinstance(loss_total, dict):
                 loss = (
-                    self.hparams.loss_weight * loss_total["si_snr"]
-                    + (1 - self.hparams.loss_weight) * loss_total["spk_loss"]
+                    loss_total["si_snr"]
+                    + self.hparams.loss_weight * loss_total["spk_loss"]
                 )
 
                 for l_kind in loss_total.keys():
@@ -343,7 +343,7 @@ class Separation(sb.Brain):
 
         if isinstance(loss_total, dict):
             for key in loss_total.keys():
-                loss_total[key] = loss_total[key].detach().cpu()
+                loss_total[key] = loss_total[key].cpu().item()
         else:
             loss_total = loss_total.detach().cpu()
         return loss_total
