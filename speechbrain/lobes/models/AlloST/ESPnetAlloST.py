@@ -67,7 +67,6 @@ class E2E(E2ETransformer):
         dropout_rate: float = 0.1,
         transformer_attn_dropout_rate: float = 0,
         encoder_fusion: bool = True,
-        encoder_share_weights: bool = False,
         decoder_fusion_type: str = "vanilla",
         phone_embed_type: str = "embed",
         ngram: int = 3,
@@ -128,7 +127,6 @@ class E2E(E2ETransformer):
             padding_idx=ignore_id,
             auxiliary_padding_idx=auxiliary_ignore_id,
             is_fusion=encoder_fusion,
-            is_share_weights=encoder_share_weights,
             phone_embed_type=phone_embed_type,
             ngram=ngram,
             global_scores_weight=global_scores_weight,
@@ -137,7 +135,6 @@ class E2E(E2ETransformer):
         )
 
         self.is_decoder_use_extra_attn = True
-        self.is_share_weights = encoder_share_weights
 
         if decoder_fusion_type == "stacked":
             self.decoder = Decoder(

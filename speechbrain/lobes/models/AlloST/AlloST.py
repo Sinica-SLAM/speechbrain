@@ -387,6 +387,7 @@ class AlloST(TransformerASR):
         kernel_size: Optional[int] = 31,
         bias: Optional[bool] = True,
         encoder_module: Optional[str] = "transformer",
+        auxiliary_encoder_module: Optional[str] = "transformer",
         conformer_activation: Optional[nn.Module] = Swish,
         attention_type: Optional[str] = "regularMHA",
         max_length: Optional[int] = 2500,
@@ -394,6 +395,7 @@ class AlloST(TransformerASR):
         is_encoder_fusion: Optional[bool] = False,
         decoder_fusion_type: Optional[str] = "vanilla",
         custom_phone_module: Optional[nn.Module] = None,
+        pre_trained_size: Optional[int] = 768,
     ):
         super().__init__(
             tgt_vocab=tgt_vocab,
@@ -418,8 +420,9 @@ class AlloST(TransformerASR):
         self.is_encoder_fusion = is_encoder_fusion
         self.custom_phone_module = custom_phone_module
         self.normalize_before = normalize_before
+        self.auxiliary_encoder_module = auxiliary_encoder_module
 
-        if encoder_module == "transformer":
+        if auxiliary_encoder_module == "transformer":
             self.auxiliary_encoder = TransformerEncoder(
                 nhead=nhead,
                 num_layers=num_auxiliary_encoder_layers,
@@ -431,7 +434,7 @@ class AlloST(TransformerASR):
                 causal=self.causal,
                 attention_type=self.attention_type,
             )
-        elif encoder_module == "conformer":
+        elif auxiliary_encoder_module == "conformer":
             self.auxiliary_encoder = ConformerEncoder(
                 nhead=nhead,
                 num_layers=num_auxiliary_encoder_layers,
@@ -451,18 +454,19 @@ class AlloST(TransformerASR):
             assert (
                 conformer_activation is not None
             ), "conformer_activation must not be None"
-
-        if is_encoder_fusion:
-            if attention_type == "regularMHA":
-                self.fusion_attn = MultiheadAttention(nhead, d_model, 0,)
-            else:
-                self.fusion_attn = RelPosMHAXL(
-                    d_model, nhead, 0, mask_pos_future=causal,
+            if is_encoder_fusion:
+                if attention_type == "regularMHA":
+                    self.fusion_attn = MultiheadAttention(nhead, d_model, 0,)
+                else:
+                    self.fusion_attn = RelPosMHAXL(
+                        d_model, nhead, 0, mask_pos_future=causal,
+                    )
+                self.fusion_norm = sb.nnet.normalization.LayerNorm(
+                    d_model, eps=1e-6
                 )
-            self.fusion_norm = sb.nnet.normalization.LayerNorm(
-                d_model, eps=1e-6
-            )
             self.fusion_dropout = torch.nn.Dropout(p=dropout)
+        elif auxiliary_encoder_module == "pre-trained":
+            self.pre_trained_linear = torch.nn.Linear(pre_trained_size, d_model)
 
         self.decoder = AlloSTDecoder(
             num_layers=num_decoder_layers,
@@ -533,12 +537,15 @@ class AlloST(TransformerASR):
             pos_embs=pos_embs_encoder,
         )
 
-        phone_encoder_out, _ = self.auxiliary_encoder(
-            src=src_phone,
-            src_mask=src_phone_mask,
-            src_key_padding_mask=src_phone_key_padding_mask,
-            pos_embs=pos_embs_phone,
-        )
+        if self.auxiliary_encoder_module == "pre-trained":
+            phone_encoder_out = self.pre_trained_linear(src_phone)
+        else:
+            phone_encoder_out, _ = self.auxiliary_encoder(
+                src=src_phone,
+                src_mask=src_phone_mask,
+                src_key_padding_mask=src_phone_key_padding_mask,
+                pos_embs=pos_embs_phone,
+            )
 
         if self.is_encoder_fusion:
             if self.normalize_before:

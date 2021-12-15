@@ -102,7 +102,6 @@ class DualEncoder(torch.nn.Module):
         padding_idx=-1,
         auxiliary_padding_idx=0,
         is_fusion=False,
-        is_share_weights=False,
         phone_embed_type: str = "embed",
         ngram: int = 3,
         global_scores_weight: float = 0.1,
@@ -194,6 +193,13 @@ class DualEncoder(torch.nn.Module):
                 ),
                 pos_enc_class(attention_dim, positional_dropout_rate),
             )
+        elif phone_embed_type == "wav2vec":
+            self.auxiliary_embed = torch.nn.Sequential(
+                torch.nn.Linear(auxiliary_idim, auxiliary_idim),
+                torch.nn.ReLU(),
+                torch.nn.Linear(auxiliary_idim, attention_dim),
+                torch.nn.ReLU(),
+            )
         else:
             raise ValueError("unknown phone_embed_type: " + phone_embed_type)
 
@@ -269,9 +275,7 @@ class DualEncoder(torch.nn.Module):
             ),
         )
 
-        if is_share_weights:
-            self.auxiliary_attns = None
-        else:
+        if phone_embed_type != "wav2vec":
             self.auxiliary_encoders = repeat(
                 auxiliary_num_blocks,
                 lambda lnum: EncoderLayer(
@@ -291,7 +295,6 @@ class DualEncoder(torch.nn.Module):
             )
 
         self.auxiliary_num_blocks = auxiliary_num_blocks
-        self.is_share_weights = is_share_weights
         self.is_fusion = is_fusion
 
         if is_fusion:
@@ -317,22 +320,14 @@ class DualEncoder(torch.nn.Module):
         """
         if self.phone_embed_type == "global":
             phone = self.auxiliary_embed(phone, group_id, global_scores)
+        elif self.phone_embed_type == "wav2vec":
+            phone = self.auxiliary_embed(phone)
         else:
             phone = self.auxiliary_embed(phone)
-
-        if self.is_share_weights:
-            auxiliary_encoders = self.encoders[-self.auxiliary_num_blocks :]
-            phone, phone_mask = auxiliary_encoders(phone, phone_mask)
-        else:
             phone, phone_mask = self.auxiliary_encoders(phone, phone_mask)
 
         if isinstance(phone, tuple):
             phone = phone[0]
-
-        if self.is_share_weights:
-            self.auxiliary_attns = [
-                encoder.self_attn.attn for encoder in auxiliary_encoders
-            ]
 
         if isinstance(self.embed, (Conv2dSubsampling, VGG2L)):
             xs, masks = self.embed(xs, masks)
