@@ -1131,13 +1131,19 @@ def dpfn_loss(
         si_snr = torch.mean(si_snr, -1)
 
     if weight > 0 and stage == "TRAIN":
-        B, spk, N, L = spec.shape
+        B = spec.shape[0]
+        spk = spec.shape[1]
         if kind == "l1":
-            spk_loss = l1_loss(pred_spec.flatten(0, 1), spec.flatten(0, 1))
+            spk_loss = l1_loss(
+                pred_spec.flatten(0, 1), spec.flatten(0, 1), reduction="batch"
+            )
         elif kind == "mse":
-            spk_loss = mse_loss(pred_spec.flatten(0, 1), spec.flatten(0, 1))
+            spk_loss = mse_loss(
+                pred_spec.flatten(0, 1), spec.flatten(0, 1), reduction="batch"
+            )
         elif kind == "spk":
             spk_criterion = nn.CrossEntropyLoss(reduction="none")
+            print(pred_spks)
             spk_loss = spk_criterion(pred_spks.flatten(0, 1), ids.flatten(0, 1))
         else:
             raise NotImplementedError(

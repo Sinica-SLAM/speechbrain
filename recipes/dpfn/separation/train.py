@@ -225,8 +225,7 @@ class Separation(sb.Brain):
                 if isinstance(loss_total, dict):
                     loss = (
                         loss_total["si_snr"]
-                        + self.hparams.loss_weight
-                        * loss_total["spk_loss"]
+                        + self.hparams.loss_weight * loss_total["spk_loss"]
                     )
                 else:
                     loss = loss_total
@@ -343,7 +342,7 @@ class Separation(sb.Brain):
 
         if isinstance(loss_total, dict):
             for key in loss_total.keys():
-                loss_total[key] = loss_total[key].cpu().item()
+                loss_total[key] = loss_total[key].detach().cpu()
         else:
             loss_total = loss_total.detach().cpu()
         return loss_total
@@ -464,8 +463,9 @@ class Separation(sb.Brain):
                     avg_loss[key] /= self.step
             else:
                 for key in loss.keys():
-                    avg_loss[key] -= avg_loss[key] / self.step
-                    avg_loss[key] += float(loss[key]) / self.step
+                    if torch.isfinite(loss[key]):
+                        avg_loss[key] -= avg_loss[key] / self.step
+                        avg_loss[key] += float(loss[key]) / self.step
         else:
             if torch.isfinite(loss):
                 avg_loss -= avg_loss / self.step

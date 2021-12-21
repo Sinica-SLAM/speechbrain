@@ -19,7 +19,7 @@ from speechbrain.nnet.linear import Linear
 from speechbrain.lobes.models.transformer.Transformer import TransformerEncoder
 from speechbrain.lobes.models.transformer.Transformer import PositionalEncoding
 from speechbrain.lobes.models.resnet import ResNet
-from speechbrain.lobes.models.resnetSE import ResNetSE ,SEBasicBlock
+from speechbrain.lobes.models.resnetSE import ResNetSE, SEBasicBlock
 import speechbrain.nnet.RNN as SBRNN
 
 EPS = 1e-8
@@ -959,7 +959,7 @@ class Dual_Computation_Block(nn.Module):
         if self.norm is not None:
             inter = self.inter_norm(inter)
         # [B/G, NG, K, S]
-        out = ( inter + intra ) * math.sqrt(0.5)
+        out = (inter + intra) * math.sqrt(0.5)
 
         return out.view(B, N, K, S)
 
@@ -1618,11 +1618,13 @@ class SpkResNet_SE(nn.Module):
             "mel_fmax": 3800.0,
         },
         variational=False,
+        encoder_type="SAP",
     ):
-        super(SpkResNet, self).__init__()
+        super(SpkResNet_SE, self).__init__()
         self.pre_encoding = pre_encoding
         self.encoding_param = encoding_param
         self.variational = variational
+        self.encoder_type = encoder_type
         self.nnet = nn.Sequential(
             ResNetSE(
                 block=SEBasicBlock,
@@ -1633,21 +1635,21 @@ class SpkResNet_SE(nn.Module):
         )
 
         outmap_size = 1
-        
+
         self.attention = nn.Sequential(
             nn.Conv1d(num_filters[3] * outmap_size, 128, kernel_size=1),
             nn.ReLU(),
             nn.BatchNorm1d(128),
             nn.Conv1d(128, num_filters[3] * outmap_size, kernel_size=1),
             nn.Softmax(dim=2),
-            )
+        )
 
         if self.encoder_type == "SAP":
             out_dim = num_filters[3] * outmap_size
         elif self.encoder_type == "ASP":
             out_dim = num_filters[3] * outmap_size * 2
         else:
-            raise ValueError('Undefined encoder')
+            raise ValueError("Undefined encoder")
 
         self.fc = nn.Linear(out_dim, z_channels)
 
@@ -1676,8 +1678,12 @@ class SpkResNet_SE(nn.Module):
             post_mid = torch.sum(post_mid * w, dim=2)
         elif self.encoder_type == "ASP":
             mu = torch.sum(post_mid * w, dim=2)
-            sg = torch.sqrt( ( torch.sum((mid**2) * w, dim=2) - mu**2 ).clamp(min=1e-5) )
-            mid = torch.cat((mu,sg),1)
+            sg = torch.sqrt(
+                (torch.sum((post_mid ** 2) * w, dim=2) - mu ** 2).clamp(
+                    min=1e-5
+                )
+            )
+            mid = torch.cat((mu, sg), 1)
 
         post_mid = post_mid.view(post_mid.size()[0], -1)
         output = self.fc(post_mid)
