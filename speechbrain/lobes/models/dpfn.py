@@ -19,6 +19,7 @@ from speechbrain.nnet.linear import Linear
 from speechbrain.lobes.models.transformer.Transformer import TransformerEncoder
 from speechbrain.lobes.models.transformer.Transformer import PositionalEncoding
 from speechbrain.lobes.models.resnet import ResNet
+from speechbrain.lobes.models.resnetSE import ResNetSE ,SEBasicBlock
 import speechbrain.nnet.RNN as SBRNN
 
 EPS = 1e-8
@@ -1552,7 +1553,134 @@ class SpkResNet(nn.Module):
         elif self.pre_encoding == "encoder":
             input = input_w
         mid = self.nnet(input)
-        output = self.post_net(mid)
+        if isinstance(mid, list):
+            post_mid = mid[-1]
+        else:
+            post_mid = mid
+        output = self.post_net(post_mid)
+        return output, mid, input
+
+    def stft(self, x):
+        nfft = self.encoding_param.get("num_fft", 256)
+        hop_length = self.encoding_param.get("hop_length", 80)
+        win_length = self.encoding_param.get("win_length", 160)
+        window = getattr(
+            torch, self.encoding_param.get("window", "hann_window")
+        )(win_length).to(x.device.type)
+
+        x_stft = torch.stft(
+            x.squeeze(1),
+            nfft,
+            hop_length,
+            win_length,
+            window,
+            return_complex=False,
+        )
+        real = x_stft[..., 0]
+        imag = x_stft[..., 1]
+
+        return torch.sqrt(torch.clamp(real ** 2 + imag ** 2, min=1e-10))
+
+    def fbank(self, x):
+        x = self.stft(x)
+
+        fs = self.encoding_param.get("sampling_rate", 8000)
+        nfft = self.encoding_param.get("num_fft", 256)
+        nfbank = self.encoding_param.get("num_fbank", 64)
+        fmin = self.encoding_param.get("mel_fmin", 80.0)
+        fmax = self.encoding_param.get("mel_fmax", 3800.0)
+        mel_basis = filters.mel(fs, nfft, nfbank, fmin, fmax)
+        mel_basis = torch.from_numpy(mel_basis).float().to(x.device)
+        x = torch.matmul(mel_basis, x)
+
+
+class SpkResNet_SE(nn.Module):
+    def __init__(
+        self,
+        layers=[3, 4, 6, 3],
+        num_filters=[32, 64, 128, 256],
+        encoder_out=256,
+        z_channels=128,
+        pooling_param={
+            "hidden_dim": None,
+            "attention": False,
+            "statistic": True,
+        },
+        pre_encoding="none",
+        encoding_param={
+            "num_fft": 512,
+            "hop_length": 80,
+            "win_length": 160,
+            "window": "hann_window",
+            "num_fbank": 64,
+            "sampling_rate": 8000,
+            "mel_fmin": 80.0,
+            "mel_fmax": 3800.0,
+        },
+        variational=False,
+    ):
+        super(SpkResNet, self).__init__()
+        self.pre_encoding = pre_encoding
+        self.encoding_param = encoding_param
+        self.variational = variational
+        self.nnet = nn.Sequential(
+            ResNetSE(
+                block=SEBasicBlock,
+                layers=[3, 4, 6, 3],
+                num_filters=[32, 64, 128, 256],
+                encoder_out=encoder_out,
+            ),
+        )
+
+        outmap_size = 1
+        
+        self.attention = nn.Sequential(
+            nn.Conv1d(num_filters[3] * outmap_size, 128, kernel_size=1),
+            nn.ReLU(),
+            nn.BatchNorm1d(128),
+            nn.Conv1d(128, num_filters[3] * outmap_size, kernel_size=1),
+            nn.Softmax(dim=2),
+            )
+
+        if self.encoder_type == "SAP":
+            out_dim = num_filters[3] * outmap_size
+        elif self.encoder_type == "ASP":
+            out_dim = num_filters[3] * outmap_size * 2
+        else:
+            raise ValueError('Undefined encoder')
+
+        self.fc = nn.Linear(out_dim, z_channels)
+
+    def forward(self, input, input_w):
+        """
+        Input:
+            X: Wav, Size(Batch, 1, Time)
+        Output:
+            Y: Speaker embeddings, Size(Batch, EmbDim)
+        """
+        if self.pre_encoding == "stft":
+            input = self.stft(input)
+        elif self.pre_encoding == "fbank":
+            input = self.fbank(input)
+        elif self.pre_encoding == "encoder":
+            input = input_w
+        mid = self.nnet(input)
+
+        if isinstance(mid, list):
+            post_mid = mid[-1]
+        else:
+            post_mid = mid
+        w = self.attention(post_mid)
+
+        if self.encoder_type == "SAP":
+            post_mid = torch.sum(post_mid * w, dim=2)
+        elif self.encoder_type == "ASP":
+            mu = torch.sum(post_mid * w, dim=2)
+            sg = torch.sqrt( ( torch.sum((mid**2) * w, dim=2) - mu**2 ).clamp(min=1e-5) )
+            mid = torch.cat((mu,sg),1)
+
+        post_mid = post_mid.view(post_mid.size()[0], -1)
+        output = self.fc(post_mid)
         return output, mid, input
 
     def stft(self, x):
