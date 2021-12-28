@@ -1143,7 +1143,6 @@ def dpfn_loss(
             )
         elif kind == "spk":
             spk_criterion = nn.CrossEntropyLoss(reduction="none")
-            print(pred_spks)
             spk_loss = spk_criterion(pred_spks.flatten(0, 1), ids.flatten(0, 1))
         else:
             raise NotImplementedError(

@@ -136,8 +136,13 @@ class Separation(sb.Brain):
 
         est_spec = self.hparams.AutoEncoder(mid)
         _, N, L = est_spec.shape
-        est_spec = est_spec.view(Batch, Spk, N, L)
-        spec = spec.view(Batch, Spk, N, L)
+        if self.hparams.SpkNet.pre_encoding == "encoder":
+            est_spec = self.hparams.Decoder(est_spec)
+            est_spec = est_spec.view(Batch, Spk, -1)
+            spec = targets.permute(0, 2, 1).contiguous()
+        else:
+            est_spec = est_spec.view(Batch, Spk, N, L)
+            spec = spec.view(Batch, Spk, N, L)
 
         pred_spks = self.hparams.SpkClassifier(C)
         pred_spks = pred_spks.view(Batch, Spk, -1)
