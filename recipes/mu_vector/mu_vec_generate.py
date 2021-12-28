@@ -34,6 +34,7 @@ class SpeakerBrain(sb.core.Brain):
         self.mu_vector = []
         self.sound_id = ""
         self.last_batch = False
+        self.count = 0
 
     def evaluate(
         self,
@@ -115,6 +116,8 @@ class SpeakerBrain(sb.core.Brain):
 
         # Append the "mean" mu-vector for a track
         if self.mu_vector and self.sound_id not in sound_id[0]:
+            self.count += 1
+            print(self.count, self.sound_id)
             self.mu_vector_list.append(
                 {
                     self.sound_id: torch.mean(
@@ -130,6 +133,8 @@ class SpeakerBrain(sb.core.Brain):
 
         # Append the last track
         if self.last_batch:
+            self.count += 1
+            print(self.count, self.sound_id)
             self.mu_vector_list.append(
                 {
                     self.sound_id: torch.mean(
@@ -292,6 +297,12 @@ if __name__ == "__main__":
             "data_folder": hparams["data_folder"],
             "save_folder": hparams["save_folder"],
             "meta_file": hparams["meta_file"],
+            "OPT_FILE": hparams["OPT_FILE"],
+            "XUMX_OUT_TRAIN_CSV": hparams["XUMX_OUT_TRAIN_CSV"],
+            "XUMX_OUT_DEV_CSV": hparams["XUMX_OUT_DEV_CSV"],
+            "XUMX_OUT_TEST_CSV": hparams["XUMX_OUT_TEST_CSV"],
+            "ORIGIN_DATAPATH": hparams["ORIGIN_DATAPATH"],
+            "TARGET_DATAPATH": hparams["TARGET_DATAPATH"],
         },
     )
 
@@ -325,6 +336,8 @@ if __name__ == "__main__":
             test_loader_kwargs=hparams["dataloader_opts"],
         )
 
+        print("Length: " + split, len(speaker_brain.mu_vector_list))
+
         # Save mu-vectors
         torch.save(
             speaker_brain.mu_vector_list,
@@ -334,3 +347,4 @@ if __name__ == "__main__":
         speaker_brain.mu_vector = []
         speaker_brain.sound_id = ""
         speaker_brain.last_batch = False
+        speaker_brain.count = 0

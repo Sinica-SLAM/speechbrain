@@ -1,6 +1,5 @@
 """
 Losses for training neural networks.
-
 Authors
  * Mirco Ravanelli 2020
  * Samuele Cornell 2020
@@ -28,7 +27,6 @@ def transducer_loss(
     log_probs, targets, input_lens, target_lens, blank_index, reduction="mean"
 ):
     """Transducer loss, see `speechbrain/nnet/loss/transducer_loss.py`.
-
     Arguments
     ---------
     predictions : torch.Tensor
@@ -57,11 +55,9 @@ class PitWrapper(nn.Module):
     """
     Permutation Invariant Wrapper to allow Permutation Invariant Training
     (PIT) with existing losses.
-
     Permutation invariance is calculated over the sources/classes axis which is
     assumed to be the rightmost dimension: predictions and targets tensors are
     assumed to have shape [batch, ..., channels, sources].
-
     Arguments
     ---------
     base_loss : function
@@ -69,12 +65,10 @@ class PitWrapper(nn.Module):
         two arguments:
         predictions and targets and no reduction is performed.
         (if a pytorch loss is used, the user must specify reduction="none").
-
     Returns
     ---------
     pit_loss : torch.nn.Module
         Torch module supporting forward method for PIT.
-
     Example
     -------
     >>> pit_mse = PitWrapper(nn.MSELoss(reduction="none"))
@@ -97,12 +91,10 @@ class PitWrapper(nn.Module):
         loss_mat : torch.Tensor
             Tensor of shape [sources, source] containing loss values for each
             possible permutation of predictions.
-
         Returns
         -------
         loss : torch.Tensor
             Permutation invariant loss for the current batch, tensor of shape [1]
-
         assigned_perm : tuple
             Indexes for optimal permutation of the input over sources which
             minimizes the loss.
@@ -126,16 +118,13 @@ class PitWrapper(nn.Module):
             shape [..., sources].
         target : torch.Tensor
             Target for the current example, tensor of shape [..., sources].
-
         Returns
         -------
         loss : torch.Tensor
             Permutation invariant loss for the current example, tensor of shape [1]
-
         assigned_perm : tuple
             Indexes for optimal permutation of the input over sources which
             minimizes the loss.
-
         """
 
         n_sources = pred.size(-1)
@@ -166,7 +155,6 @@ class PitWrapper(nn.Module):
         p : list of tuples
             List of optimal permutations, e.g. for batch=2 and n_sources=3
             [(0, 1, 2), (0, 2, 1].
-
         Returns
         -------
         reordered : torch.Tensor
@@ -187,13 +175,11 @@ class PitWrapper(nn.Module):
                 [batch, channels, ..., sources].
             targets : torch.Tensor
                 Target tensor, of shape [batch, channels, ..., sources].
-
             Returns
             -------
             loss : torch.Tensor
                 Permutation invariant loss for current examples, tensor of
                 shape [batch]
-
             perms : list
                 List of indexes for optimal permutation of the inputs over
                 sources.
@@ -214,7 +200,6 @@ def ctc_loss(
     log_probs, targets, input_lens, target_lens, blank_index, reduction="mean"
 ):
     """CTC loss.
-
     Arguments
     ---------
     predictions : torch.Tensor
@@ -266,7 +251,6 @@ def l1_loss(
     predictions, targets, length=None, allowed_len_diff=3, reduction="mean"
 ):
     """Compute the true l1 loss, accounting for length differences.
-
     Arguments
     ---------
     predictions : torch.Tensor
@@ -281,7 +265,6 @@ def l1_loss(
         Options are 'mean', 'batch', 'batchmean', 'sum'.
         See pytorch for 'mean', 'sum'. The 'batch' option returns
         one loss per item in the batch, 'batchmean' returns sum / batch size.
-
     Example
     -------
     >>> probs = torch.tensor([[0.9, 0.1, 0.1, 0.9]])
@@ -299,7 +282,6 @@ def mse_loss(
     predictions, targets, length=None, allowed_len_diff=3, reduction="mean"
 ):
     """Compute the true mean squared error, accounting for length differences.
-
     Arguments
     ---------
     predictions : torch.Tensor
@@ -314,7 +296,6 @@ def mse_loss(
         Options are 'mean', 'batch', 'batchmean', 'sum'.
         See pytorch for 'mean', 'sum'. The 'batch' option returns
         one loss per item in the batch, 'batchmean' returns sum / batch size.
-
     Example
     -------
     >>> probs = torch.tensor([[0.9, 0.1, 0.1, 0.9]])
@@ -332,7 +313,6 @@ def classification_error(
     probabilities, targets, length=None, allowed_len_diff=3, reduction="mean"
 ):
     """Computes the classification error at frame or batch level.
-
     Arguments
     ---------
     probabilities : torch.Tensor
@@ -348,7 +328,6 @@ def classification_error(
         Options are 'mean', 'batch', 'batchmean', 'sum'.
         See pytorch for 'mean', 'sum'. The 'batch' option returns
         one loss per item in the batch, 'batchmean' returns sum / batch size.
-
     Example
     -------
     >>> probs = torch.tensor([[[0.9, 0.1], [0.1, 0.9]]])
@@ -378,7 +357,6 @@ def nll_loss(
     reduction="mean",
 ):
     """Computes negative log likelihood loss.
-
     Arguments
     ---------
     log_probabilities : torch.Tensor
@@ -394,7 +372,6 @@ def nll_loss(
         Options are 'mean', 'batch', 'batchmean', 'sum'.
         See pytorch for 'mean', 'sum'. The 'batch' option returns
         one loss per item in the batch, 'batchmean' returns sum / batch size.
-
     Example
     -------
     >>> probs = torch.tensor([[0.9, 0.1], [0.1, 0.9]])
@@ -431,7 +408,6 @@ def bce_loss(
 ):
     """Computes binary cross-entropy (BCE) loss. It also applies the sigmoid
     function directly (this improves the numerical stability).
-
     Arguments
     ---------
     inputs : torch.Tensor
@@ -454,7 +430,6 @@ def bce_loss(
         Options are 'mean', 'batch', 'batchmean', 'sum'.
         See pytorch for 'mean', 'sum'. The 'batch' option returns
         one loss per item in the batch, 'batchmean' returns sum / batch size.
-
     Example
     -------
     >>> inputs = torch.tensor([10.0, -6.0])
@@ -500,7 +475,6 @@ def kldiv_loss(
 ):
     """Computes the KL-divergence error at the batch level.
     This loss applies label smoothing directly to the targets
-
     Arguments
     ---------
     probabilities : torch.Tensor
@@ -516,7 +490,6 @@ def kldiv_loss(
         Options are 'mean', 'batch', 'batchmean', 'sum'.
         See pytorch for 'mean', 'sum'. The 'batch' option returns
         one loss per item in the batch, 'batchmean' returns sum / batch size.
-
     Example
     -------
     >>> probs = torch.tensor([[0.9, 0.1], [0.1, 0.9]])
@@ -563,7 +536,6 @@ def kldiv_loss(
 
 def truncate(predictions, targets, allowed_len_diff=3):
     """Ensure that predictions and targets are the same length.
-
     Arguments
     ---------
     predictions : torch.Tensor
@@ -596,7 +568,6 @@ def compute_masked_loss(
     reduction="mean",
 ):
     """Compute the true average loss of a set of waveforms of unequal length.
-
     Arguments
     ---------
     loss_fn : function
@@ -656,17 +627,14 @@ def compute_masked_loss(
 
 def get_si_snr_with_pitwrapper(source, estimate_source):
     """This function wraps si_snr calculation with the speechbrain pit-wrapper.
-
     Arguments:
     ---------
     source: [B, T, C],
         Where B is the batch size, T is the length of the sources, C is
         the number of sources the ordering is made so that this loss is
         compatible with the class PitWrapper.
-
     estimate_source: [B, T, C]
         The estimated source.
-
     Example:
     ---------
     >>> x = torch.arange(600).reshape(3, 100, 2)
@@ -684,16 +652,13 @@ def get_si_snr_with_pitwrapper(source, estimate_source):
 
 def cal_si_snr(source, estimate_source):
     """Calculate SI-SNR.
-
     Arguments:
     ---------
     source: [T, B, C],
         Where B is batch size, T is the length of the sources, C is the number of sources
         the ordering is made so that this loss is compatible with the class PitWrapper.
-
     estimate_source: [T, B, C]
         The estimated source.
-
     Example:
     ---------
     >>> import numpy as np
@@ -756,11 +721,9 @@ def get_mask(source, source_lengths):
     ---------
     source : [T, B, C]
     source_lengths : [B]
-
     Returns
     -------
     mask : [T, B, 1]
-
     Example:
     ---------
     >>> source = torch.randn(4, 3, 2)
@@ -795,18 +758,15 @@ class AngularMargin(nn.Module):
     An implementation of Angular Margin (AM) proposed in the following
     paper: '''Margin Matters: Towards More Discriminative Deep Neural Network
     Embeddings for Speaker Recognition''' (https://arxiv.org/abs/1906.07317)
-
     Arguments
     ---------
     margin : float
         The margin for cosine similiarity
     scale : float
         The scale for cosine similiarity
-
     Return
     ---------
     predictions : torch.Tensor
-
     Example
     -------
     >>> pred = AngularMargin()
@@ -824,14 +784,12 @@ class AngularMargin(nn.Module):
 
     def forward(self, outputs, targets):
         """Compute AM between two tensors
-
         Arguments
         ---------
         outputs : torch.Tensor
             The outputs of shape [N, C], cosine similarity is required.
         targets : torch.Tensor
             The targets of shape [N, C], where the margin is applied for.
-
         Return
         ---------
         predictions : torch.Tensor
@@ -846,14 +804,12 @@ class AdditiveAngularMargin(AngularMargin):
     in the following paper: '''Margin Matters: Towards More Discriminative Deep
     Neural Network Embeddings for Speaker Recognition'''
     (https://arxiv.org/abs/1906.07317)
-
     Arguments
     ---------
     margin : float
         The margin for cosine similiarity.
     scale: float
         The scale for cosine similiarity.
-
     Returns
     -------
     predictions : torch.Tensor
@@ -880,14 +836,12 @@ class AdditiveAngularMargin(AngularMargin):
     def forward(self, outputs, targets):
         """
         Compute AAM between two tensors
-
         Arguments
         ---------
         outputs : torch.Tensor
             The outputs of shape [N, C], cosine similarity is required.
         targets : torch.Tensor
             The targets of shape [N, C], where the margin is applied for.
-
         Return
         ---------
         predictions : torch.Tensor
@@ -947,7 +901,6 @@ class LogSoftmaxWrapper(nn.Module):
             [batch, 1, outdim].
         targets : torch.Tensor
             Target tensor, of shape [batch, 1].
-
         Returns
         -------
         loss: torch.Tensor
@@ -968,12 +921,10 @@ class LogSoftmaxWrapper(nn.Module):
 
 def ctc_loss_kd(log_probs, targets, input_lens, blank_index, device):
     """Knowledge distillation for CTC loss.
-
     Reference
     ---------
     Distilling Knowledge from Ensembles of Acoustic Models for Joint CTC-Attention End-to-End Speech Recognition.
     https://arxiv.org/abs/2005.09310
-
     Arguments
     ---------
     log_probs : torch.Tensor
@@ -1031,7 +982,6 @@ def ctc_loss_kd(log_probs, targets, input_lens, blank_index, device):
 
 def ce_kd(inp, target):
     """Simple version of distillation for cross-entropy loss.
-
     Arguments
     ---------
     inp : torch.Tensor
@@ -1046,12 +996,10 @@ def nll_loss_kd(
     probabilities, targets, rel_lab_lengths,
 ):
     """Knowledge distillation for negative log-likelihood loss.
-
     Reference
     ---------
     Distilling Knowledge from Ensembles of Acoustic Models for Joint CTC-Attention End-to-End Speech Recognition.
     https://arxiv.org/abs/2005.09310
-
     Arguments
     ---------
     probabilities : torch.Tensor
@@ -1062,7 +1010,6 @@ def nll_loss_kd(
         Format is [batch, frames, p]
     rel_lab_lengths : torch.Tensor
         Length of each utterance, if the frame-level loss is desired.
-
     Example
     -------
     >>> probabilities = torch.tensor([[[0.8, 0.2], [0.2, 0.8]]])

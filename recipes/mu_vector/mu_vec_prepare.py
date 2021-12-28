@@ -21,21 +21,34 @@ from shutil import copyfile
 
 logger = logging.getLogger(__name__)
 # Define where to save the csv file for generating mu vector.
-OPT_FILE = "opt_xumx_output_prepare.pkl"
-XUMX_OUT_TRAIN_CSV = "xumx_output_train.csv"
-XUMX_OUT_DEV_CSV = "xumx_output_dev.csv"
-XUMX_OUT_TEST_CSV = "xumx_output_test.csv"
+# OPT_FILE = "D1_iter1_opt_xumx_output_prepare.pkl"
+# XUMX_OUT_TRAIN_CSV = "D1_iter1_xumx_output_train.csv"
+# XUMX_OUT_DEV_CSV = "D1_iter1_xumx_output_dev.csv"
+# XUMX_OUT_TEST_CSV = "D1_iter1_xumx_output_test.csv"
 SAMPLERATE = 44100
 
-# Restore xumx outputs
-ORIGIN_DATAPATH = Path("/mnt/md1/datasets/xumx_output")
-TARGET_DATAPATH = Path("xumx_output")
+# # Restore xumx outputs
+# ORIGIN_DATAPATH = Path("/mnt/md1/datasets/D1_iter1_output")
+# TARGET_DATAPATH = Path("D1_iter1_output")
+
+OPT_FILE = ""
+XUMX_OUT_TRAIN_CSV = ""
+XUMX_OUT_DEV_CSV = ""
+XUMX_OUT_TEST_CSV = ""
+ORIGIN_DATAPATH = ""
+TARGET_DATAPATH = ""
 
 
 def prepare_xmux_output(
     data_folder,
     save_folder,
     meta_file,
+    OPT_FILE,
+    XUMX_OUT_TRAIN_CSV,
+    XUMX_OUT_DEV_CSV,
+    XUMX_OUT_TEST_CSV,
+    ORIGIN_DATAPATH,
+    TARGET_DATAPATH,
     splits=["train", "valid", "test"],
     seg_dur=3.0,
     amp_th=5e-04,
@@ -75,8 +88,16 @@ def prepare_xmux_output(
     >>> prepare_xmux_outputsb(data_folder, save_folder)
     """
 
+    # Assign global variables
+    OPT_FILE = OPT_FILE
+    XUMX_OUT_TRAIN_CSV = XUMX_OUT_TRAIN_CSV
+    XUMX_OUT_DEV_CSV = XUMX_OUT_DEV_CSV
+    XUMX_OUT_TEST_CSV = XUMX_OUT_TEST_CSV
+    ORIGIN_DATAPATH = ORIGIN_DATAPATH
+    TARGET_DATAPATH = TARGET_DATAPATH
+
     # Restore xumx outputs in terms of the datasets in speech brain
-    restore_xumx_output(ORIGIN_DATAPATH, TARGET_DATAPATH)
+    restore_xumx_output(Path(ORIGIN_DATAPATH), Path(TARGET_DATAPATH))
 
     # Create configuration for easily skipping data_preparation stage
     conf = {
@@ -182,13 +203,13 @@ def _get_sound_split_lists(data_folder, meta_file):
 
     for data in meta_splits:
         if data["split"] == "train":
-            train_lst.append(os.path.join(data_folder, "wav", data["ID"]))
+            train_lst.append(os.path.join(data_folder, data["ID"]))
 
         elif data["split"] == "valid":
-            valid_lst.append(os.path.join(data_folder, "wav", data["ID"]))
+            valid_lst.append(os.path.join(data_folder, data["ID"]))
 
         elif data["split"] == "test":
-            test_lst.append(os.path.join(data_folder, "wav", data["ID"]))
+            test_lst.append(os.path.join(data_folder, data["ID"]))
 
     return train_lst, valid_lst, test_lst
 
@@ -248,6 +269,7 @@ def prepare_csv(seg_dur, wav_lst, csv_file, full_segment=False, amp_th=0):
             signal, fs = torchaudio.load(wav_file)
 
         except RuntimeError:
+            print(wav_file)
             logger.info(f"No signal found: {wav_file}")
             continue
 
@@ -279,6 +301,7 @@ def prepare_csv(seg_dur, wav_lst, csv_file, full_segment=False, amp_th=0):
                 #  Avoid chunks with very small energy
                 mean_sig = torch.mean(np.abs(signal[start_sample:end_sample]))
                 if mean_sig < amp_th:
+                    print(wav_file)
                     continue
 
                 # Composition of the csv_line

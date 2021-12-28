@@ -39,7 +39,10 @@ class rearrange_nsynth:
             if not self.meta_dir.exists():
                 Path.mkdir(self.meta_dir, parents=True, exist_ok=True)
 
-            copyfile(metadata_path, self.meta_dir / dst)
+            try:
+                copyfile(metadata_path, self.meta_dir / dst)
+            except RuntimeError:
+                print("No original meta data exist.")
 
         for datapath in self.origin_datapaths:
             paths = [p for p in datapath.iterdir()]
@@ -157,7 +160,7 @@ class rearrange_nsynth:
 def main():
     """
     Usage:
-    python nsynth_rearrange.py -origin_dir Nsynth/ -target_dir data/ -meta_dir data/
+    python nsynth_rearrange.py -origin_dir Nsynth/ -target_dir data/
     """
 
     parser = argparse.ArgumentParser(

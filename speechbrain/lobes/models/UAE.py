@@ -1,5 +1,6 @@
 import math
 import julius
+import torch
 from torch import nn
 from ..utils import capture_init, center_trim
 
@@ -13,13 +14,19 @@ class BLSTM(nn.Module):
             hidden_size=dim,
             input_size=dim,
         )
-        self.sep_linear = nn.Linear(2 * dim, dim)
-        self.recons_linear = nn.Linear(2 * dim, dim)
+        self.sep_linear = nn.Linear(dim, dim)
+        self.recons_linear = nn.Linear(dim, dim)
 
     def forward(self, x):
         x = x.permute(2, 0, 1)
         x = self.lstm(x)[0]
-        sep_code, recons_code = self.sep_linear(x), self.recons_linear(x)
+        length = x.shape[-1]
+
+        sep_code, recons_code = x[: length // 2], x[length // 2 :]
+        sep_code, recons_code = (
+            self.sep_linear(sep_code),
+            self.recons_linear(recons_code),
+        )
         sep_code = sep_code.permute(1, 2, 0)
         recons_code = recons_code.permute(1, 2, 0)
 
@@ -78,7 +85,14 @@ class Encoder(nn.Module):
 
         saved = []
         for encode in self.encoder:
-            x = encode(x)
+
+            try:
+                x = encode(x)
+
+            except RuntimeError:
+                print(x.shape)
+                print(encode)
+
             saved.append(x)
 
         return x, saved
@@ -202,7 +216,7 @@ class UAE(nn.Module):
         growth=2.0,
         lstm_layers=2,
         context=3,
-        normalize=True,
+        normalize=False,
         samplerate=44100,
         segment_length=4 * 10 * 44100,
     ):
@@ -247,6 +261,8 @@ class UAE(nn.Module):
         self.normalize = normalize
         self.samplerate = samplerate
         self.segment_length = segment_length
+        self.practical_length = 0
+        self.max_length = 0
 
         if glu:
             activation = nn.GLU(dim=1)
@@ -309,6 +325,26 @@ class UAE(nn.Module):
         if rescale:
             rescale_module(self, reference=rescale)
 
+    def _padding(self, input):
+        """Padding the audio times.
+        Arguments
+        ---------
+        input : torch.Tensor
+            Tensor of size [B, N, T].
+            where, B = Batchsize,
+                   N = number of filters
+                   T = time points
+        """
+        B, C, T = input.shape
+
+        if T < self.segment_length:
+            pad = torch.Tensor(torch.zeros(B, C, self.segment_length - T)).type(
+                input.type()
+            )
+            input = torch.cat([input, pad], dim=-1)
+
+        return input
+
     def valid_length(self, length):
         """
         Return the nearest valid length to use with the model so that
@@ -336,6 +372,9 @@ class UAE(nn.Module):
     def forward(self, mix):
 
         x = mix
+        self.practical_length = x.shape[-1]
+        x = self._padding(x)
+        print("x", x.shape)
 
         if self.normalize:
             mono = mix.mean(dim=1, keepdim=True)
@@ -380,5 +419,11 @@ class UAE(nn.Module):
             self.audio_channels,
             recons.size(-1),
         )
+
+        sep, recons = (
+            sep[..., : self.practical_length],
+            recons[..., : self.practical_length],
+        )
+        recons = recons.sum(dim=1)
 
         return sep, recons

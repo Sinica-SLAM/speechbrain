@@ -18,7 +18,7 @@ from speechbrain.dataio.dataio import (
 )
 
 logger = logging.getLogger(__name__)
-OPT_FILE = "opt_nsynth_prepare.pkl"
+OPT_FILE = "opt_musdb_prepare.pkl"
 TRAIN_CSV = "train.csv"
 DEV_CSV = "dev.csv"
 TEST_CSV = "test.csv"
@@ -35,7 +35,7 @@ def prepare_musdb(
     amp_th=5e-04,
     source=None,
     split_instrument=False,
-    random_segment=False,
+    full_segment=False,
     skip_prep=False,
 ):
     """
@@ -60,8 +60,8 @@ def prepare_musdb(
         Path to the folder where the MUSDB dataset source is stored.
     split_instrument : bool
         Instrument-wise split
-    random_segment : bool
-        Train random segments
+    full_segment : bool
+        Generate random segments
     skip_prep: Bool
         If True, skip preparation.
 
@@ -119,21 +119,19 @@ def prepare_musdb(
         data_folder, meta_file
     )
 
-    # Creating csv file for training data
+    # Creating csv file for train, valid, test data.
     if "train" in splits:
         prepare_csv(
-            seg_dur, wav_lst_train, save_csv_train, random_segment, amp_th
+            seg_dur, wav_lst_train, save_csv_train, full_segment, amp_th
         )
 
     if "valid" in splits:
         prepare_csv(
-            seg_dur, wav_lst_valid, save_csv_valid, random_segment, amp_th
+            seg_dur, wav_lst_valid, save_csv_valid, full_segment, amp_th
         )
 
     if "test" in splits:
-        prepare_csv(
-            seg_dur, wav_lst_test, save_csv_test, random_segment, amp_th
-        )
+        prepare_csv(seg_dur, wav_lst_test, save_csv_test, full_segment, amp_th)
 
     # Saving options (useful to skip this phase when already done)
     save_pkl(conf, save_opt)
@@ -141,7 +139,7 @@ def prepare_musdb(
 
 def skip(splits, save_folder, conf):
     """
-    Detects if the voxceleb data_preparation has been already done.
+    Detects if the musdb data_preparation has been already done.
     If the preparation has been done, we can skip it.
 
     Returns
@@ -263,7 +261,7 @@ def _get_chunks(seg_dur, audio_id, audio_duration):
     return chunk_lst
 
 
-def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
+def prepare_csv(seg_dur, wav_lst, csv_file, full_segment=False, amp_th=0):
     """
     Creates the csv file given a list of wav files.
 
@@ -309,10 +307,11 @@ def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
             signal, fs = torchaudio.load(wav_file)
 
         except RuntimeError:
+            print(wav_file)
             logger.info(f"No signal found: {wav_file}")
             continue
 
-        if random_segment:
+        if full_segment:
             audio_duration = signal.shape[-1] / SAMPLERATE
             start_sample = 0
             stop_sample = signal.shape[-1]

@@ -11,8 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from ..utils import overlap_and_add
-from ..utils import capture_init
+from ..utils import overlap_and_add, capture_init
 
 
 class MulCatBlock(nn.Module):

@@ -222,12 +222,15 @@ class Separation(sb.Brain):
             est_source = model(mix)
             self.output_layers = est_source.shape[0]
 
+        # Triangle window
+        elif stage == "inference":
+            est_source = model(mix)[-1]
+            # est_source = process_chunk(model, mix.to(self.device))
+            return est_source
+
         # Output estimates from the last layer
         else:
             est_source = model(mix)[-1]
-
-        if stage == "inference":
-            return est_source
 
         # print('est', est_source.shape, 'targets', targets.shape)
         return est_source, targets  # (ordering-- vocal, bass, drum, other)
@@ -510,7 +513,6 @@ class Separation(sb.Brain):
 
         txtout = os.path.join(results_path, "results.txt")
         fp = open(txtout, "w")
-        inference_dur = 10  # 10s
 
         for track in tqdm(test_set):
             input_file = os.path.join(
@@ -521,7 +523,7 @@ class Separation(sb.Brain):
             info = sf.info(input_file)
             start = 0
             stop = int(info.duration * info.samplerate)
-            step = int(inference_dur * info.samplerate)
+            step = int(self.hparams.inference_dur * info.samplerate)
 
             predictions = []
             while start < stop:
@@ -814,5 +816,5 @@ if __name__ == "__main__":
         )
 
     # Eval
-    # separator.evaluate(test_data, min_key="loss")
+    separator.evaluate(test_data, min_key="loss")
     separator.save_results(results_path=hparams["save_results"])

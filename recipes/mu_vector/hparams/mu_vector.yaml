@@ -3,20 +3,30 @@
 # Authors: Hwidong Na & Mirco Ravanelli
 # ################################
 
-# Basic parameters
+#  Basic parameters
 seed: 1986
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
 output_folder: !ref results/musdb_b16/<seed>
-
-save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
+# CSV file name
+OPT_FILE: xumx_output_prepare.pkl
+XUMX_OUT_TRAIN_CSV: xumx_output_train.csv
+XUMX_OUT_DEV_CSV: xumx_output_dev.csv
+XUMX_OUT_TEST_CSV: xumx_output_test.csv
+
+# Data restore path
+ORIGIN_DATAPATH: mnt/md1/datasets/xumx_output
+TARGET_DATAPATH: xumx_output
+
 # Data files
-data_folder: musdb_no_silence/data  # Assign original musdb directory
-xumx_train_annotation: !ref <save_folder>/xumx_output_train.csv
-xumx_valid_annotation: !ref <save_folder>/xumx_output_dev.csv
-xumx_test_annotation: !ref <save_folder>/xumx_output_test.csv
-meta_file: !ref <data_folder>/meta/meta.csv
+data_folder: xumx_output  # Assign xumx output data
+save_folder: !ref <output_folder>/save/mu_vector/<data_folder>
+xumx_train_annotation: !ref <save_folder>/<XUMX_OUT_TRAIN_CSV>
+xumx_valid_annotation: !ref <save_folder>/<XUMX_OUT_DEV_CSV>
+xumx_test_annotation: !ref <save_folder>/<XUMX_OUT_TEST_CSV>
+meta_data_folder: musdb_no_silence/data # Assign original musdb "meta" data
+meta_file: !ref <meta_data_folder>/meta/meta.csv
 
 # Use the following links for the official voxceleb splits:
 ckpt_interval_minutes: 15 # save checkpoint every N min

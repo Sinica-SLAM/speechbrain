@@ -56,7 +56,7 @@ limit_training_signal_len: False
 training_signal_len: 132300 # sample rate 44100 * 3
 # valid_signal_len: 1764000 # sample rate 44100 * 40
 
-train_seg_dur: 3 # train seg length (sec)
+train_seg_dur: 2 # train seg length (sec)
 valid_seg_dur: 3 # valid seg length (sec)
 
 # Set it to True to dynamically create mixtures at training time

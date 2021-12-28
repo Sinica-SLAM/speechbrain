@@ -39,9 +39,9 @@ def prepare_nsynth(
     splits=["train", "dev", "test"],
     seg_dur=3.0,
     amp_th=5e-04,
+    vad=False,
     source=None,
     split_instrument=False,
-    random_segment=False,
     skip_prep=False,
 ):
     """
@@ -68,8 +68,8 @@ def prepare_nsynth(
         Path to the folder where the Nsynth dataset source is stored.
     split_instrument : bool
         Instrument-wise split
-    random_segment : bool
-        Train random segments
+    vad : bool
+        Train vad segments
     skip_prep: Bool
         If True, skip preparation.
 
@@ -128,12 +128,10 @@ def prepare_nsynth(
 
     # Creating csv file for training data
     if "train" in splits:
-        prepare_csv(
-            seg_dur, wav_lst_train, save_csv_train, random_segment, amp_th
-        )
+        prepare_csv(seg_dur, wav_lst_train, save_csv_train, vad, amp_th)
 
     if "dev" in splits:
-        prepare_csv(seg_dur, wav_lst_dev, save_csv_dev, random_segment, amp_th)
+        prepare_csv(seg_dur, wav_lst_dev, save_csv_dev, vad, amp_th)
 
     # For PLDA verification or test on instrument family classification
     if "test" in splits:
@@ -253,7 +251,7 @@ def _get_sound_split_lists(data_folders, meta_train, meta_valid):
         path = os.path.join(data_folder, "wav", "**", "*.wav")
         files = [file for file in glob.glob(path, recursive=True)]
         # import random
-        # files = random.sample(files,500)
+        # files = random.sample(files,50)
 
         # avoid test speakers for train and dev splits
         for f in tqdm(files):
@@ -292,7 +290,7 @@ def _get_chunks(seg_dur, audio_id, audio_duration):
     return chunk_lst
 
 
-def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
+def prepare_csv(seg_dur, wav_lst, csv_file, vad=False, amp_th=0):
     """
     Creates the csv file given a list of wav files.
 
@@ -302,8 +300,8 @@ def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
         The list of wav files of a given data split.
     csv_file : str
         The path of the output csv file
-    random_segment: bool
-        Read random segments
+    vad: bool
+        Read vad segments
     amp_th: float
         Threshold on the average amplitude on the chunk.
         If under this threshold, the chunk is discarded.
@@ -339,7 +337,7 @@ def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
         signal, fs = torchaudio.load(wav_file)
         signal = signal.squeeze(0)
 
-        if random_segment:
+        if vad:
             audio_duration = signal.shape[0] / SAMPLERATE
             start_sample = 0
             stop_sample = signal.shape[0]
@@ -355,6 +353,7 @@ def prepare_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
                 inst_family,
             ]
             entry.append(csv_line)
+
         else:
             audio_duration = signal.shape[0] / SAMPLERATE
 
@@ -442,8 +441,12 @@ def prepare_csv_enrol_test(data_folders, save_folder, verification_pairs_file):
             wav = data_folder + "/wav/" + id + ".wav"
 
             # Reading the signal (to retrieve duration in seconds)
-            signal, fs = torchaudio.load(wav)
+            try:
+                signal, fs = torchaudio.load(wav)
+            except RuntimeError:
+                print(wav)
             signal = signal.squeeze(0)
+
             audio_duration = signal.shape[0] / SAMPLERATE
             start_sample = 0
             stop_sample = signal.shape[0]
@@ -483,6 +486,7 @@ def prepare_csv_enrol_test(data_folders, save_folder, verification_pairs_file):
             # Reading the signal (to retrieve duration in seconds)
             signal, fs = torchaudio.load(wav)
             signal = signal.squeeze(0)
+
             audio_duration = signal.shape[0] / SAMPLERATE
             start_sample = 0
             stop_sample = signal.shape[0]

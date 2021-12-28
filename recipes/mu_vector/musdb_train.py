@@ -125,8 +125,9 @@ class SpeakerBrain(sb.core.Brain):
 
         loss = self.hparams.compute_cost(predictions, inst_id, lens)
 
-        if hasattr(self.hparams.lr_annealing, "on_batch_end"):
-            self.hparams.lr_annealing.on_batch_end(self.optimizer)
+        if stage != sb.Stage.TEST:
+            if hasattr(self.hparams.lr_annealing, "on_batch_end"):
+                self.hparams.lr_annealing.on_batch_end(self.optimizer)
 
         if stage != sb.Stage.TRAIN:
             self.error_metrics.append(
