@@ -134,13 +134,24 @@ class Separation(sb.Brain):
                 dim=-1,
             )
 
-        est_spec = self.hparams.AutoEncoder(mid)
-        _, N, L = est_spec.shape
-        est_spec = est_spec.view(Batch, Spk, N, L)
-        spec = spec.view(Batch, Spk, N, L)
-
-        pred_spks = self.hparams.SpkClassifier(C)
-        pred_spks = pred_spks.view(Batch, Spk, -1)
+        if (
+            self.hparams.loss_kind == "l1"
+            or self.hparams.loss_kind == "mse"
+            or self.hparams.loss_kind == "snr"
+        ):
+            est_spec = self.hparams.AutoEncoder(mid)
+            _, N, L = est_spec.shape
+            est_spec = est_spec.view(Batch, Spk, N, L)
+            spec = spec.view(Batch, Spk, N, L)
+            pred_spks = 0
+        elif self.hparams.loss_kind == "spk":
+            pred_spks = self.hparams.SpkClassifier(C)
+            pred_spks = pred_spks.view(Batch, Spk, -1)
+            est_spec = 0
+        else:
+            raise NotImplementedError(
+                f"We haven't implemented loss kind: {self.hparams.loss_kind}"
+            )
 
         # T changed after conv1d in encoder, fix it here
         T_origin = mix.size(1)

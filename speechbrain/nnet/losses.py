@@ -1143,8 +1143,11 @@ def dpfn_loss(
             )
         elif kind == "spk":
             spk_criterion = nn.CrossEntropyLoss(reduction="none")
-            print(pred_spks)
             spk_loss = spk_criterion(pred_spks.flatten(0, 1), ids.flatten(0, 1))
+        elif kind == "snr":
+            spec = spec.permute(1, 0, 2).contiguous()
+            pred_spec = pred_spec.permute(1, 0, 2).contiguous()
+            spk_loss = cal_si_snr(spec, pred_spec).squeeze(0)
         else:
             raise NotImplementedError(
                 f"We only implemented DPFN loss of l1, mse, spk but we got {kind}"
