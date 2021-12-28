@@ -1110,6 +1110,7 @@ def dpfn_loss(
     -----
     loss: [B]
     """
+    B, _, spk = targets.shape
     targets = targets.permute(1, 0, 2).contiguous()
     if isinstance(predictions, list):
         if stage == "TRAIN":
@@ -1131,8 +1132,6 @@ def dpfn_loss(
         si_snr = torch.mean(si_snr, -1)
 
     if weight > 0 and stage == "TRAIN":
-        B = spec.shape[0]
-        spk = spec.shape[1]
         if kind == "l1":
             spk_loss = l1_loss(
                 pred_spec.flatten(0, 1), spec.flatten(0, 1), reduction="batch"

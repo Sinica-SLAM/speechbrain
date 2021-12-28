@@ -140,9 +140,22 @@ class Separation(sb.Brain):
             or self.hparams.loss_kind == "snr"
         ):
             est_spec = self.hparams.AutoEncoder(mid)
-            _, N, L = est_spec.shape
-            est_spec = est_spec.view(Batch, Spk, N, L)
-            spec = spec.view(Batch, Spk, N, L)
+            if self.hparams.SpkNet.pre_encoding == "encoder":
+                est_spec = self.hparams.Decoder(est_spec)
+                est_spec = est_spec.view(Batch, Spk, -1)
+                est_spec = est_spec.permute(0, 2, 1).contiguous()
+                spec = targets
+
+                T_origin = targets.size(1)
+                T_est = est_spec.size(1)
+                if T_origin > T_est:
+                    est_spec = F.pad(est_spec, (0, 0, 0, T_origin - T_est))
+                else:
+                    est_spec = est_spec[:, :T_origin, :]
+            else:
+                _, N, L = est_spec.shape
+                est_spec = est_spec.view(Batch, Spk, N, L)
+                spec = spec.view(Batch, Spk, N, L)
             pred_spks = 0
         elif self.hparams.loss_kind == "spk":
             pred_spks = self.hparams.SpkClassifier(C)
