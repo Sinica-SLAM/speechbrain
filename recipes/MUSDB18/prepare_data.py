@@ -2,7 +2,7 @@
 The .csv preperation functions for MUSDB18.
 
 Author
- * Cem Subakan 2020
+ * Y.W. Chen 2021
 
  """
 
@@ -13,8 +13,7 @@ from tqdm.contrib import tqdm
 from shutil import copyfile
 import torchaudio
 
-
-SAMPLERATE = 44100
+# import random
 
 
 def prepare_musdb18(
@@ -22,11 +21,10 @@ def prepare_musdb18(
     savepath,
     origin_datapath,
     target_datapath,
-    train_seg_dur=3.0,
-    valid_seg_dur=40.0,
+    samples,
     fs=44100,
     skip_prep=False,
-    librimix_addnoise=False,
+    data_stride=44100,
 ):
     """
     Prepared musdb18.
@@ -47,22 +45,31 @@ def prepare_musdb18(
         assert "musdb" in datapath, "Inconsistent datapath"
         restore_musdb18(origin_datapath, target_datapath)
         create_musdb18_csv(
-            datapath,
-            savepath,
-            train_seg_dur=train_seg_dur,
-            valid_seg_dur=valid_seg_dur,
-            fs=fs,
+            datapath, savepath, samples=samples, fs=fs, data_stride=data_stride,
         )
 
 
-def _get_chunks(seg_dur, audio_id, audio_duration, num_chunks):
+def _get_chunks(samples, audio_id, audio_samples, data_stride, set_type):
     """
     Returns list of chunks
     """
-    chunk_lst = [
-        audio_id + "_" + str(i * seg_dur) + "_" + str(i * seg_dur + seg_dur)
-        for i in range(num_chunks)
-    ]
+
+    chunk_lst = []
+    start = 0
+
+    if set_type == "train":
+        while start + samples < audio_samples:
+            chunk_lst.append(
+                audio_id + "_" + str(start) + "_" + str(start + samples)
+            )
+            start += data_stride
+
+    else:
+        while start + samples < audio_samples:
+            chunk_lst.append(
+                audio_id + "_" + str(start) + "_" + str(start + samples)
+            )
+            start += samples
 
     return chunk_lst
 
@@ -78,9 +85,9 @@ def create_musdb18_csv(
         "drums": "drums",
         "other": "other",
     },
-    train_seg_dur=3.0,
-    valid_seg_dur=40.0,
+    samples=44100 * 10,
     fs=44100,
+    data_stride=44100,
 ):
     """
     This function creates the csv files to get the speechbrain data loaders for the wsj0-2mix dataset.
@@ -96,13 +103,14 @@ def create_musdb18_csv(
         drums_path = os.path.join(datapath, set_type, folder_names["drums"])
         other_path = os.path.join(datapath, set_type, folder_names["other"])
 
-        seg_dur = train_seg_dur if set_type == "train" else valid_seg_dur
-
         # import random
         # if set_type == "train":
-        # files = random.sample(os.listdir(mix_path),1)
+        #     files = random.sample(os.listdir(mix_path), 1)
 
         # else:
+        #     files = random.sample(os.listdir(mix_path), 10)
+
+        # files = random.sample(os.listdir(mix_path), 1)
         files = os.listdir(mix_path)
 
         mix_fl_paths = [os.path.join(mix_path, fl) for fl in files]
@@ -114,23 +122,21 @@ def create_musdb18_csv(
         csv_columns = [
             "ID",
             "duration",
+            "mean",
+            "std",
             "start",
             "stop",
             "mix_wav",
             "mix_wav_format",
-            "mix_wav_opts",
             "vocals_wav",
             "vocals_wav_format",
-            "vocals_wav_opts",
             "bass_wav",
             "bass_wav_format",
             "bass_wav_opts",
             "drums_wav",
             "drums_wav_format",
-            "drums_wav_opts",
             "other_wav",
             "other_wav_format",
-            "other_wav_opts",
         ]
 
         if os.path.exists(savepath + "/musdb18_" + set_type + ".csv"):
@@ -157,51 +163,55 @@ def create_musdb18_csv(
 
                     audio_id = mix_path.split("/")[-1]
                     signal, fs = torchaudio.load(mix_path)
-                    audio_duration = signal.shape[-1] / fs
-                    num_chunks = int(
-                        audio_duration / seg_dur
-                    )  # all in milliseconds
+                    wav = signal.mean(0)
+                    mean = wav.mean().item()
+                    std = wav.std().item()
 
+                    audio_samples = signal.shape[-1]
+                    audio_duration = audio_samples / fs
+
+                    # Chunk by samples
                     uniq_chunks_list = _get_chunks(
-                        seg_dur, audio_id, audio_duration, num_chunks
+                        samples, audio_id, audio_samples, data_stride, set_type
                     )
+
                     uniq_chunks_list.append(
                         audio_id
                         + "_"
-                        + str(num_chunks * seg_dur)
+                        + str(audio_samples - samples)
                         + "_"
-                        + str(audio_duration)
+                        + str(audio_samples)
                     )
 
                     for j in range(len(uniq_chunks_list)):
                         s, e = uniq_chunks_list[j].split("_")[-2:]
-                        start_sample = int(float(s) * fs)
-                        end_sample = int(float(e) * fs)
+                        start_sample = int(s)
+                        end_sample = int(e)
 
                         # Append the last segment < seg_dur
-                        if j == len(uniq_chunks_list):
-                            end_sample = signal.shape[-1][0]
+                        if j == len(uniq_chunks_list) - 1:
+                            end_sample = signal.shape[-1]
+                            start_sample = (
+                                end_sample - samples
+                            )  # For the same segment duration
 
                         row = {
                             "ID": str(i) + "_" + str(j),
                             "duration": str(audio_duration),
+                            "mean": mean,
+                            "std": std,
                             "start": start_sample,
                             "stop": end_sample,
                             "mix_wav": mix_path,
                             "mix_wav_format": "wav",
-                            "mix_wav_opts": None,
                             "vocals_wav": vocals_path,
                             "vocals_wav_format": "wav",
-                            "vocals_wav_opts": None,
                             "bass_wav": bass_path,
                             "bass_wav_format": "wav",
-                            "bass_wav_opts": None,
                             "drums_wav": drums_path,
                             "drums_wav_format": "wav",
-                            "drums_wav_opts": None,
                             "other_wav": other_path,
                             "other_wav_format": "wav",
-                            "other_wav_opts": None,
                         }
 
                         writer.writerow(row)
