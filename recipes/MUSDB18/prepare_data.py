@@ -12,8 +12,7 @@ import csv
 from tqdm.contrib import tqdm
 from shutil import copyfile
 import torchaudio
-
-# import random
+import random
 
 
 def prepare_musdb18(
@@ -148,6 +147,7 @@ def create_musdb18_csv(
             ) as csvfile:
                 writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
                 writer.writeheader()
+                dataset = []
                 for (
                     i,
                     (mix_path, vocals_path, bass_path, drums_path, other_path),
@@ -214,7 +214,15 @@ def create_musdb18_csv(
                             "other_wav_format": "wav",
                         }
 
-                        writer.writerow(row)
+                        dataset.append(row)
+
+                SEED = 44
+                random.seed(SEED)
+                random.shuffle(dataset)
+
+                # Shuffle
+                for data in dataset:
+                    writer.writerow(data)
 
 
 def restore_musdb18(origin_datapath, target_datapath):

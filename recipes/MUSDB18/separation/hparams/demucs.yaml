@@ -19,7 +19,6 @@ data_folder: musdb18
 origin_datapath: /mnt/md1/datasets/musdb18
 target_datapath: musdb18
 
-# experiment_name: demucs_vocals_aug_stride_3_b4_grad_norm
 experiment_name: demucs
 output_folder: !ref results/<experiment_name>/<seed>
 train_log: !ref <output_folder>/train_log.txt
@@ -83,7 +82,7 @@ model: !new:speechbrain.lobes.models.DEMUCS.Demucs
     lstm_layers: 2
     context: 3
     normalize: False
-    samplerate: 44100
+    samplerate: !ref <sameple_rate>
     segment_length: 441000
 
 optimizer: !name:torch.optim.Adam
@@ -92,8 +91,8 @@ optimizer: !name:torch.optim.Adam
 loss: !name:speechbrain.nnet.losses.l1_loss
 
 lr_scheduler: !new:speechbrain.nnet.schedulers.ReduceLROnPlateau
-    factor: 0.5
-    patience: 10
+    factor: 0.3
+    patience: 500
 
 epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
     limit: !ref <N_epochs>

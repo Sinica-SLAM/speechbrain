@@ -141,6 +141,7 @@ def apply_model(
     overlap=0.25,
     transition_power=1.0,
     progress=False,
+    no_pad=False,
 ):
     """
     Apply model to a given mixture.
@@ -149,7 +150,7 @@ def apply_model(
             and apply the oppositve shift to the output. This is repeated `shifts` time and
             all predictions are averaged. This effectively makes the model time equivariant
             and improves SDR by up to 0.2 points.
-        split (bool): if True, the input will be broken down in 8 seconds extracts
+        split (bool): if True, the input will be broken down into chunks with segment_length
             and predictions will be performed individually on each and concatenated.
             Useful for model with large memory footprint like Tasnet.
         progress (bool): if True, show a progress bar (requires split=True)
@@ -186,7 +187,7 @@ def apply_model(
         weight = (weight / weight.max()) ** transition_power
         for offset in offsets:
             chunk = TensorChunk(mix, offset, segment)
-            chunk_out = apply_model(model, chunk, shifts=shifts)
+            chunk_out = apply_model(model, chunk, shifts=shifts, no_pad=no_pad)
             chunk_length = chunk_out.shape[-1]
             out[..., offset : offset + segment] += (
                 weight[:chunk_length] * chunk_out
@@ -206,10 +207,19 @@ def apply_model(
             shifted = TensorChunk(
                 padded_mix, offset, length + max_shift - offset
             )
-            shifted_out = apply_model(model, shifted)
+            shifted_out = apply_model(model, shifted, no_pad=no_pad)
             out += shifted_out[..., max_shift - offset :]
         out /= shifts
         return out
+
+    elif no_pad:
+        mix = tensor_chunk(mix)
+        mix = mix.padded(length)
+        with torch.no_grad():
+            out = model(mix)[-1]
+        out = out.permute(0, 3, 2, 1)[0]  # (N, C, T)
+        return out
+
     else:
         valid_length = model.valid_length(length)
         mix = tensor_chunk(mix)

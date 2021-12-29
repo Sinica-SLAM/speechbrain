@@ -319,27 +319,41 @@ class Separator(nn.Module):
 
 class SWave(nn.Module):
     @capture_init
-    def __init__(self, N, L, H, R, C, sr, segment, input_normalize):
+    def __init__(
+        self,
+        sources,
+        N,
+        L,
+        H,
+        R,
+        C,
+        samplerate,
+        segment,
+        input_normalize,
+        segment_length,
+    ):
         super(SWave, self).__init__()
         # hyper-parameter
-        self.N, self.L, self.H, self.R, self.C, self.sr, self.segment = (
-            N,
-            L,
-            H,
-            R,
-            C,
-            sr,
-            segment,
-        )
+        (
+            self.sources,
+            self.N,
+            self.L,
+            self.H,
+            self.R,
+            self.C,
+            self.samplerate,
+            self.segment,
+            self.segment_length,
+        ) = (sources, N, L, H, R, C, samplerate, segment, segment_length)
         self.input_normalize = input_normalize
-        self.context_len = 2 * self.sr / 1000
-        self.context = int(self.sr * self.context_len / 1000)
+        self.context_len = 2 * self.samplerate / 1000
+        self.context = int(self.samplerate * self.context_len / 1000)
         self.layer = self.R
         self.filter_dim = self.context * 2 + 1
         self.num_spk = self.C
         # similar to dprnn paper, setting chancksize to sqrt(2*L)
         self.segment_size = int(
-            np.sqrt(2 * self.sr * self.segment / (self.L / 2))
+            np.sqrt(2 * self.samplerate * self.segment / (self.L / 2))
         )
 
         # model sub-networks
@@ -376,10 +390,8 @@ class SWave(nn.Module):
                 mixture.shape[0], self.C, self.N, mixture_w.shape[2]
             )
 
-            # print('output_ii', output_ii.shape)
             # To Stereo
             output_ii = self.to_stereo(output_ii.unsqueeze(-1))
-            # print('to stereo', output_ii.shape)
             output_ii_l, output_ii_r = output_ii[..., 0], output_ii[..., 1]
             output_ii_l, output_ii_r = (
                 self.decoder(output_ii_l),
@@ -393,13 +405,12 @@ class SWave(nn.Module):
             output_ii = torch.cat(
                 [output_ii_l.unsqueeze(-1), output_ii_r.unsqueeze(-1)], dim=-1
             )
-            # print('output_ii after decode', output_ii.shape)
             outputs.append(output_ii)
 
         outputs = torch.stack(outputs)
         outputs = outputs.permute(0, 1, 3, 4, 2)
 
-        return outputs  # Estimates (mulcat blocks, batch, samples, channel, num_spks)
+        return outputs  # Estimates (mulcat blocks, batch, samples, channel, num_sources)
 
 
 class Encoder(nn.Module):

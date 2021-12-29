@@ -14,29 +14,19 @@ wsj3mix.
 
 
 Authors
- * Y.W. Chen
+ * Y.W. Wei 2021
 """
 
 import sys
 import torch
-import torch.nn as nn
 import torchaudio
 import speechbrain as sb
 import speechbrain.nnet.schedulers as schedulers
 from speechbrain.utils.distributed import run_on_main
-from speechbrain.lobes.utils import center_trim, apply_model
+from speechbrain.lobes.utils import apply_model
 from hyperpyyaml import load_hyperpyyaml
 from tqdm import tqdm
 import logging
-from augment import (
-    FlipChannels,
-    FlipSign,
-    Scale,
-    Shift,
-    Remix,
-    SpeedPerturb,
-    RandomPitch,
-)
 
 
 # Define training procedure
@@ -48,6 +38,7 @@ class Separation(sb.Brain):
         hparams=None,
         run_opts=None,
         checkpointer=None,
+        normalize_data=None,
     ):
 
         super(Separation, self).__init__(
@@ -58,47 +49,39 @@ class Separation(sb.Brain):
             checkpointer=checkpointer,
         )
 
-        self.count = 0
+        self.normalize_data = normalize_data
+        self.output_layers = self.hparams.model.R
         self.model = self.hparams.model.to(self.device)
 
-        # Demucs augment
-        self.augment = [RandomPitch(), SpeedPerturb()]
-        self.augment += [
-            Shift(self.hparams.data_stride * self.hparams.sample_rate),
-            FlipSign(),
-            FlipChannels(),
-            Scale(),
-            Remix(group_size=self.hparams.remix_group_size),
-        ]
-        self.augment = nn.Sequential(*self.augment).to(self.device)
-        print(self.augment)
-
     def compute_forward(self, mix, targets, stage, noise=None):
-
-        sources = {"vocals": 0, "bass": 1, "drums": 2, "other": 3}
-
         """Forward computations from the mixture to the separated signals."""
         if stage == "inference":
             mix = (
                 torch.from_numpy(mix).unsqueeze(0).float().to(self.device)
             )  # (B, T, C)
+
+            mix = mix.transpose(1, 2)  # (B, C, T)
             ref = mix.mean(dim=-1)  # mono mixture
 
             # Standardize
             mix = (mix - ref.mean()) / ref.std()
-            mix = mix.transpose(1, 2)  # (B, C, T)
-            est_source = apply_model(
-                self.model.to(self.device), mix, split=self.hparams.split
-            )
-            est_source = est_source * ref.std() + ref.mean()
+            predictions = apply_model(
+                self.model.to(self.device),
+                mix,
+                split=self.hparams.split,
+                no_pad=self.hparams.no_pad,
+            )[-1]
+            predictions = predictions * ref.std() + ref.mean()
 
-            return est_source
+            print(predictions.shape)
+
+            return predictions
 
         # Unpack lists and put tensors in the right device
         mix, mix_lens = mix  # (B, T, C)
         mix, mix_lens = mix.to(self.device), mix_lens.to(self.device)
 
-        # Convert targets to tensor
+        # Convert targets to tensor, and calculate Mean from stereo to mono
         targets = torch.cat(
             [
                 targets[i][0].unsqueeze(-1)
@@ -109,33 +92,35 @@ class Separation(sb.Brain):
             self.device
         )  # (B, T, C, N)
 
-        mix = mix.transpose(1, 2)  # (B, T, C) -> (B, C, T)
-        targets = targets.permute(0, 3, 2, 1)  # (B, T, C, N) -> (B, N, C, T)
-
-        # Add demucs augment
+        # Add speech distortions
         if stage == sb.Stage.TRAIN:
             with torch.no_grad():
-                targets = self.augment(targets)
-                mix = targets.sum(dim=1)  # (B, C, T)
+                if self.hparams.use_speedperturb or self.hparams.use_rand_shift:
+                    mix, targets = self.add_speed_perturb(targets, mix_lens)
+                    mix = targets.sum(-1)
 
-        est_source = self.model(mix)  # (B, N, C, T)
+                if self.hparams.use_wavedrop:
+                    mix = self.hparams.wavedrop(mix, mix_lens)
 
-        # For single source
-        if len(self.hparams.source_names) == 1:
-            targets = targets[
-                :, sources[self.hparams.source_names[0]], :, :
-            ].unsqueeze(1)
+            mix = mix.transpose(1, 2)  # (B, C, T)
+            predictions = self.model(mix)  # (mulcat blocks, B, T, C, N)
 
-        target_source = center_trim(targets, est_source)  # (B, N, C, T)
+        else:
+            mix = mix.transpose(1, 2)  # (B, C, T)
+            predictions = self.model(mix)[-1]  # (B, T, C, N)
 
-        return (
-            est_source,
-            target_source,
-        )  # (ordering -- vocal, bass, drum, other)
+        return predictions, targets  # (ordering-- vocal, bass, drum, other)
 
-    def compute_objectives(self, est_source, target_source):
+    def compute_objectives(self, predictions, targets, stage):
         """Computes the l1 loss"""
-        loss = self.hparams.loss(est_source, target_source)
+
+        if stage == sb.Stage.TRAIN:
+            loss = 0
+            for i in range(self.output_layers):
+                loss += self.hparams.loss(predictions[i], targets)
+
+        else:
+            loss = self.hparams.loss(targets, predictions)
 
         return loss
 
@@ -150,23 +135,16 @@ class Separation(sb.Brain):
             batch.other_sig,
         ]
 
-        est_source, target_source = self.compute_forward(
+        predictions, targets = self.compute_forward(
             mixture, targets, sb.Stage.TRAIN
         )
-
-        loss = self.compute_objectives(est_source, target_source)
+        loss = self.compute_objectives(predictions, targets, sb.Stage.TRAIN)
 
         # normalize the loss by gradient_accumulation step
         (loss / self.hparams.grad_accum_count).backward()
 
         # Gradient accumulation
         if self.step % self.hparams.grad_accum_count == 0:
-            grad_norm = 0
-            for p in self.model.parameters():
-                if p.grad is not None:
-                    grad_norm += p.grad.data.norm() ** 2
-
-            grad_norm = grad_norm ** 0.5
             self.optimizer.step()
             self.optimizer.zero_grad()
 
@@ -175,7 +153,6 @@ class Separation(sb.Brain):
     def evaluate_batch(self, batch, stage):
         """Computations needed for validation/test batches"""
         mixture = batch.mix_sig
-
         targets = [
             batch.vocals_sig,
             batch.bass_sig,
@@ -184,10 +161,8 @@ class Separation(sb.Brain):
         ]
 
         with torch.no_grad():
-            est_source, target_source = self.compute_forward(
-                mixture, targets, stage
-            )
-            loss = self.compute_objectives(est_source, target_source)
+            predictions, targets = self.compute_forward(mixture, targets, stage)
+            loss = self.compute_objectives(predictions, targets, stage)
 
         return loss.detach()
 
@@ -227,122 +202,155 @@ class Separation(sb.Brain):
                 test_stats=stage_stats,
             )
 
-    def save_results(
-        self, results_path, workers=2, rank=0, save=True, world_size=1
-    ):
+    def add_speed_perturb(self, targets, targ_lens):
+        """Adds speed perturbation and random_shift to the input signals"""
 
+        min_len = -1
+        recombine = False
+
+        if self.hparams.use_speedperturb:
+            # Performing speed change (independently on each source)
+            new_targets = []
+            recombine = True
+
+            for i in range(targets.shape[-1]):
+                if targets.dim() == 4:
+                    new_target = self.hparams.speedperturb(
+                        targets[:, :, :, i], targ_lens
+                    )
+                else:
+                    new_target = self.hparams.speedperturb(
+                        targets[:, :, i], targ_lens
+                    )
+                new_targets.append(new_target)
+                if targets.dim() == 4:
+                    if i == 0:
+                        min_len = new_target.shape[-2]
+                    else:
+                        if new_target.shape[-2] < min_len:
+                            min_len = new_target.shape[-2]
+                else:
+                    if i == 0:
+                        min_len = new_target.shape[-1]
+                    else:
+                        if new_target.shape[-1] < min_len:
+                            min_len = new_target.shape[-1]
+
+            if self.hparams.use_rand_shift:
+                # Performing random_shift (independently on each source)
+                recombine = True
+                for i in range(targets.shape[-1]):
+                    rand_shift = torch.randint(
+                        self.hparams.min_shift, self.hparams.max_shift, (1,)
+                    )
+                    new_targets[i] = new_targets[i].to(self.device)
+                    new_targets[i] = torch.roll(
+                        new_targets[i], shifts=(rand_shift[0],), dims=1
+                    )
+
+            # Re-combination
+            if recombine:
+                if self.hparams.use_speedperturb:
+                    if targets.dim() == 4:
+                        targets = torch.zeros(
+                            targets.shape[0],
+                            min_len,
+                            targets.shape[-2],
+                            targets.shape[-1],
+                            device=targets.device,
+                            dtype=torch.float,
+                        )
+                    else:
+                        targets = torch.zeros(
+                            targets.shape[0],
+                            min_len,
+                            targets.shape[-1],
+                            device=targets.device,
+                            dtype=torch.float,
+                        )
+                for i, new_target in enumerate(new_targets):
+                    if targets.dim() == 4:
+                        targets[:, :, :, i] = new_targets[i][:, 0:min_len]
+                    else:
+                        targets[:, :, i] = new_targets[i][:, 0:min_len]
+
+        mix = targets.sum(-1)
+        return mix, targets
+
+    def reset_layer_recursively(self, layer):
+        """Reinitializes the parameters of the neural networks"""
+        if hasattr(layer, "reset_parameters"):
+            layer.reset_parameters()
+        for child_layer in layer.modules():
+            if layer != child_layer:
+                self.reset_layer_recursively(child_layer)
+
+    def save_results(self, results_path):
         """This script computes the SDR metrics and saves
         them into a csv file"""
 
         import musdb
         import museval
-
-        # import soundfile as sf
-        from scipy.io import wavfile
-        import gzip
+        import soundfile as sf
+        import os
         import sys
-        from concurrent import futures
-        from torch import distributed
-        from pathlib import Path
 
         self.device = "cpu"
         # we load tracks from the original musdb set
         musdb_path = "/mnt/md1/datasets/musdb18"
         test_set = musdb.DB(musdb_path, subsets=["test"], is_wav=True)
+        results = museval.EvalStore()
 
-        output_dir = Path(results_path) / "results"
-        output_dir.mkdir(exist_ok=True, parents=True)
-        json_folder = Path(results_path) / "results/test"
-        json_folder.mkdir(exist_ok=True, parents=True)
+        if not os.path.exists(results_path):
+            os.mkdir(results_path)
 
-        # we load tracks from the original musdb set
-        pendings = []
+        txtout = os.path.join(results_path, "results.txt")
+        fp = open(txtout, "w")
 
-        with futures.ProcessPoolExecutor(workers or 1) as pool:
-            for index in tqdm(
-                range(rank, len(test_set), world_size), file=sys.stdout
-            ):
-                track = test_set.tracks[index]
+        for track in tqdm(test_set):
 
-                out = json_folder / f"{track.name}.json.gz"
-                if out.exists():
-                    continue
-
-                # Avoid memory accumulation
-                with torch.no_grad():
-                    estimates = self.compute_forward(
-                        track.audio, targets=None, stage="inference"
-                    )
-
-                estimates = estimates.transpose(1, 2)
-                references = torch.stack(
-                    [
-                        torch.from_numpy(track.targets[name].audio).t()
-                        for name in self.hparams.model.sources
-                    ]
+            # Avoid memory accumulation
+            with torch.no_grad():
+                predictions = self.compute_forward(
+                    track.audio, targets=None, stage="inference"
                 )
 
-                references = references.transpose(1, 2).cpu().numpy()
-                estimates = estimates.cpu().numpy()
-                win = int(1.0 * self.hparams.sample_rate)
-                hop = int(1.0 * self.hparams.sample_rate)
+            predictions = torch.cat(predictions, dim=1).squeeze()  # (T, C, N)
+            predictions = predictions.permute(2, 0, 1)  # (N, T, C)
 
-                if save:
-                    folder = Path(results_path) / "wav/test" / track.name
-                    folder.mkdir(exist_ok=True, parents=True)
-                    for name, estimate in zip(
-                        self.hparams.model.sources, estimates
-                    ):
-                        wavfile.write(
-                            str(folder / (name + ".wav")), 44100, estimate
-                        )
+            predictions = predictions.detach().cpu().numpy()
+            estimates = {}
+            for j, name in enumerate(self.hparams.source_names):
+                estimates[name] = predictions[j]
 
-                if workers:
-                    pendings.append(
-                        (
-                            track.name,
-                            pool.submit(
-                                museval.evaluate,
-                                references,
-                                estimates,
-                                win=win,
-                                hop=hop,
-                            ),
-                        )
-                    )
-                else:
-                    pendings.append(
-                        (
-                            track.name,
-                            museval.evaluate(
-                                references, estimates, win=win, hop=hop
-                            ),
-                        )
-                    )
-                del references, estimates, track
+            output_path = os.path.join(results_path, track.name)
 
-            for track_name, pending in tqdm(pendings, file=sys.stdout):
-                if workers:
-                    pending = pending.result()
-                sdr, isr, sir, sar = pending
-                track_store = museval.TrackStore(
-                    win=44100, hop=44100, track_name=track_name
+            if not os.path.exists(output_path):
+                os.mkdir(output_path)
+
+            print("Processing... {}".format(track.name), file=sys.stderr)
+            print(track.name, file=fp)
+            for target, estimate in estimates.items():
+                sf.write(
+                    os.path.join(output_path, target) + ".wav",
+                    estimate,
+                    self.hparams.sample_rate,
                 )
-                for idx, target in enumerate(self.hparams.model.sources):
-                    values = {
-                        "SDR": sdr[idx].tolist(),
-                        "SIR": sir[idx].tolist(),
-                        "ISR": isr[idx].tolist(),
-                        "SAR": sar[idx].tolist(),
-                    }
 
-                    track_store.add_target(target_name=target, values=values)
-                    json_path = json_folder / f"{track_name}.json.gz"
-                    gzip.open(json_path, "w").write(
-                        track_store.json.encode("utf-8")
-                    )
-            if world_size > 1:
-                distributed.barrier()
+            track_scores = museval.eval_mus_track(track, estimates)
+            results.add_track(track_scores.df)
+            print(track_scores, file=sys.stderr)
+            print(track_scores, file=fp)
+
+            del estimates
+
+        print(results, file=sys.stderr)
+        print(results, file=fp)
+        results.save(os.path.join(results_path, "results.pandas"))
+        results.frames_agg = "mean"
+        print(results, file=sys.stderr)
+        print(results, file=fp)
+        fp.close()
 
 
 def dataio_prep(hparams):
@@ -480,6 +488,7 @@ if __name__ == "__main__":
     hparams_file, run_opts, overrides = sb.parse_arguments(sys.argv[1:])
     with open(hparams_file) as fin:
         hparams = load_hyperpyyaml(fin, overrides)
+    run_opts["auto_mix_prec"] = hparams["auto_mix_prec"]
 
     # Initialize ddp (useful only for multi-GPU DDP training)
     sb.utils.distributed.ddp_init_group(run_opts)
@@ -497,11 +506,6 @@ if __name__ == "__main__":
     # Data preparation
     from recipes.MUSDB18.prepare_data import prepare_musdb18  # noqa
 
-    # Samples adjustment
-    samples = hparams["model"].valid_length(hparams["samples"])
-    print(f"Number of training samples adjusted to {samples}")
-    samples = samples + hparams["data_stride"]
-
     run_on_main(
         prepare_musdb18,
         kwargs={
@@ -512,11 +516,10 @@ if __name__ == "__main__":
             "skip_prep": hparams["skip_prep"],
             "fs": hparams["sample_rate"],
             "data_stride": hparams["data_stride"],
-            "samples": samples,
+            "samples": hparams["samples"],
         },
     )
 
-    # Create dataset objects
     train_data, valid_data, test_data = dataio_prep(hparams)
 
     # Load pretrained model if pretrained_separator is present in the yaml
@@ -533,6 +536,11 @@ if __name__ == "__main__":
         checkpointer=hparams["checkpointer"],
     )
 
+    # re-initialize the parameters if we don't use a pretrained model
+    if "pretrained_separator" not in hparams:
+        for module in separator.modules.values():
+            separator.reset_layer_recursively(module)
+
     if not hparams["test_only"]:
         # Training
         separator.fit(
@@ -545,4 +553,4 @@ if __name__ == "__main__":
 
     # Eval
     separator.evaluate(test_data, min_key="loss")
-    separator.save_results(results_path=hparams["save_results"], save=False)
+    separator.save_results(results_path=hparams["save_results"])
