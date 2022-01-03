@@ -1,6 +1,5 @@
 import math
 import julius
-import torch
 from torch import nn
 from ..utils import capture_init, center_trim
 
@@ -22,7 +21,7 @@ class BLSTM(nn.Module):
         x = self.lstm(x)[0]
         length = x.shape[-1]
 
-        sep_code, recons_code = x[: length // 2], x[length // 2 :]
+        sep_code, recons_code = x[:, :, : length // 2], x[:, :, length // 2 :]
         sep_code, recons_code = (
             self.sep_linear(sep_code),
             self.recons_linear(recons_code),
@@ -82,17 +81,9 @@ class Encoder(nn.Module):
             channels = int(growth * channels)
 
     def forward(self, x):
-
         saved = []
         for encode in self.encoder:
-
-            try:
-                x = encode(x)
-
-            except RuntimeError:
-                print(x.shape)
-                print(encode)
-
+            x = encode(x)
             saved.append(x)
 
         return x, saved
@@ -325,26 +316,6 @@ class UAE(nn.Module):
         if rescale:
             rescale_module(self, reference=rescale)
 
-    def _padding(self, input):
-        """Padding the audio times.
-        Arguments
-        ---------
-        input : torch.Tensor
-            Tensor of size [B, N, T].
-            where, B = Batchsize,
-                   N = number of filters
-                   T = time points
-        """
-        B, C, T = input.shape
-
-        if T < self.segment_length:
-            pad = torch.Tensor(torch.zeros(B, C, self.segment_length - T)).type(
-                input.type()
-            )
-            input = torch.cat([input, pad], dim=-1)
-
-        return input
-
     def valid_length(self, length):
         """
         Return the nearest valid length to use with the model so that
@@ -372,9 +343,6 @@ class UAE(nn.Module):
     def forward(self, mix):
 
         x = mix
-        self.practical_length = x.shape[-1]
-        x = self._padding(x)
-        print("x", x.shape)
 
         if self.normalize:
             mono = mix.mean(dim=1, keepdim=True)
@@ -420,10 +388,6 @@ class UAE(nn.Module):
             recons.size(-1),
         )
 
-        sep, recons = (
-            sep[..., : self.practical_length],
-            recons[..., : self.practical_length],
-        )
         recons = recons.sum(dim=1)
 
         return sep, recons
