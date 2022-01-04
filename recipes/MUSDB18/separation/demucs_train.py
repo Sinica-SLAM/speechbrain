@@ -14,7 +14,7 @@ wsj3mix.
 
 
 Authors
- * Y.W. Chen
+ * Yi Wei Chen
 """
 
 import sys
@@ -239,7 +239,7 @@ class Separation(sb.Brain):
 
         # import soundfile as sf
         from scipy.io import wavfile
-        import gzip
+        import os
         import sys
         from concurrent import futures
         from torch import distributed
@@ -250,14 +250,19 @@ class Separation(sb.Brain):
         musdb_path = "/mnt/md1/datasets/musdb18"
         test_set = musdb.DB(musdb_path, subsets=["test"], is_wav=True)
 
+        if not os.path.exists(results_path):
+            os.mkdir(results_path)
+
+        txtout = os.path.join(results_path, "results.txt")
+        fp = open(txtout, "w")
+
         output_dir = Path(results_path) / "results"
         output_dir.mkdir(exist_ok=True, parents=True)
         json_folder = Path(results_path) / "results/test"
         json_folder.mkdir(exist_ok=True, parents=True)
 
+        results = museval.EvalStore()
         # we load tracks from the original musdb set
-        pendings = []
-
         with futures.ProcessPoolExecutor(workers or 1) as pool:
             for index in tqdm(
                 range(rank, len(test_set), world_size), file=sys.stdout
@@ -274,18 +279,14 @@ class Separation(sb.Brain):
                         track.audio, targets=None, stage="inference"
                     )
 
-                estimates = estimates.transpose(1, 2)
+                estimates = estimates.transpose(1, 2).cpu().numpy()
                 references = torch.stack(
                     [
                         torch.from_numpy(track.targets[name].audio).t()
-                        for name in self.hparams.model.sources
+                        for name in self.model.sources
                     ]
                 )
-
-                references = references.transpose(1, 2).cpu().numpy()
-                estimates = estimates.cpu().numpy()
-                win = int(1.0 * self.hparams.sample_rate)
-                hop = int(1.0 * self.hparams.sample_rate)
+                references = references.transpose(1, 2).numpy()
 
                 if save:
                     folder = Path(results_path) / "wav/test" / track.name
@@ -297,50 +298,55 @@ class Separation(sb.Brain):
                             str(folder / (name + ".wav")), 44100, estimate
                         )
 
-                if workers:
-                    pendings.append(
-                        (
-                            track.name,
-                            pool.submit(
-                                museval.evaluate,
-                                references,
-                                estimates,
-                                win=win,
-                                hop=hop,
-                            ),
-                        )
-                    )
-                else:
-                    pendings.append(
-                        (
-                            track.name,
-                            museval.evaluate(
-                                references, estimates, win=win, hop=hop
-                            ),
-                        )
-                    )
-                del references, estimates, track
+                # SDR
+                win = int(1.0 * self.hparams.sample_rate)
+                hop = int(1.0 * self.hparams.sample_rate)
 
-            for track_name, pending in tqdm(pendings, file=sys.stdout):
-                if workers:
-                    pending = pending.result()
-                sdr, isr, sir, sar = pending
-                track_store = museval.TrackStore(
-                    win=44100, hop=44100, track_name=track_name
+                track_scores = museval.TrackStore(
+                    win=win, hop=hop, track_name=track.name
                 )
-                for idx, target in enumerate(self.hparams.model.sources):
+
+                print("Processing... {}".format(track.name), file=sys.stderr)
+                print(track.name, file=fp)
+                if workers:
+                    scores = pool.submit(
+                        museval.evaluate,
+                        references,
+                        estimates,
+                        win=win,
+                        hop=hop,
+                    )
+                    SDR, ISR, SIR, SAR = scores.result()
+
+                else:
+                    SDR, ISR, SIR, SAR = museval.evaluate(
+                        references, estimates, win=win, hop=hop
+                    )
+
+                for i, target in enumerate(self.model.sources):
                     values = {
-                        "SDR": sdr[idx].tolist(),
-                        "SIR": sir[idx].tolist(),
-                        "ISR": isr[idx].tolist(),
-                        "SAR": sar[idx].tolist(),
+                        "SDR": SDR[i].tolist(),
+                        "SIR": SIR[i].tolist(),
+                        "ISR": ISR[i].tolist(),
+                        "SAR": SAR[i].tolist(),
                     }
 
-                    track_store.add_target(target_name=target, values=values)
-                    json_path = json_folder / f"{track_name}.json.gz"
-                    gzip.open(json_path, "w").write(
-                        track_store.json.encode("utf-8")
-                    )
+                    track_scores.add_target(target_name=target, values=values)
+
+                results.add_track(track_scores.df)
+                print(track_scores, file=sys.stderr)
+                print(track_scores, file=fp)
+
+                del estimates, track
+
+            print(results, file=sys.stderr)
+            print(results, file=fp)
+            results.save(os.path.join(results_path, "results.pandas"))
+            results.frames_agg = "mean"
+            print(results, file=sys.stderr)
+            print(results, file=fp)
+            fp.close()
+
             if world_size > 1:
                 distributed.barrier()
 
@@ -545,4 +551,6 @@ if __name__ == "__main__":
 
     # Eval
     separator.evaluate(test_data, min_key="loss")
-    separator.save_results(results_path=hparams["save_results"], save=False)
+    separator.save_results(
+        results_path=hparams["save_results"], save=hparams["save"]
+    )

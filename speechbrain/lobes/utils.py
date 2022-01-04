@@ -225,5 +225,13 @@ def apply_model(
         mix = tensor_chunk(mix)
         padded_mix = mix.padded(valid_length)
         with torch.no_grad():
-            out = model(padded_mix)[0]
+            out = model(padded_mix)
+
+        if len(out) == 1:
+            out = out[0]
+
+        else:
+            out, *_ = out
+            out = out[0]
+
         return center_trim(out, length)
