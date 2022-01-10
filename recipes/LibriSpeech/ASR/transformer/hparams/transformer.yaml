@@ -24,20 +24,20 @@ train_log: !ref <output_folder>/train_log.txt
 pretrained_lm_tokenizer_path: speechbrain/asr-transformer-transformerlm-librispeech
 
 # Data files
-data_folder: !PLACEHOLDER # e.g., /path/to/LibriSpeech
+data_folder: /mnt/md1/datasets/LibriSpeech/LibriSpeech # e.g., /path/to/LibriSpeech
 # If RIRS_NOISES dir exists in /localscratch/xxx_corpus/RIRS_NOISES
 # then data_folder_rirs should be /localscratch/xxx_corpus
 # otherwise the dataset will automatically be downloaded
 data_folder_rirs: !ref <data_folder>
-train_splits: ["train-clean-100", "train-clean-360", "train-other-500"]
+train_splits: ["train-clean-100"]
 dev_splits: ["dev-clean"]
-test_splits: ["test-clean", "test-other"]
+test_splits: ["test-clean"]
 skip_prep: False
 train_csv: !ref <data_folder>/train.csv
 valid_csv: !ref <data_folder>/dev-clean.csv
 test_csv:
     - !ref <data_folder>/test-clean.csv
-    - !ref <data_folder>/test-other.csv
+    # - !ref <data_folder>/test-other.csv
 ckpt_interval_minutes: 30 # save checkpoint every N min
 
 # Training parameters
@@ -46,7 +46,7 @@ ckpt_interval_minutes: 30 # save checkpoint every N min
 # Empirically, we found that this value should be >= 128.
 # Please, set your parameters accordingly.
 number_of_epochs: 110
-batch_size: 16 # This works for 2x GPUs with 32GB
+batch_size: 4 # This works for 2x GPUs with 32GB
 ctc_weight: 0.3
 gradient_accumulation: 4
 gradient_clipping: 5.0

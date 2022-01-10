@@ -304,10 +304,11 @@ class ASR(sb.core.Brain):
 def dataio_prepare(hparams):
     """This function prepares the datasets to be used in the brain class.
     It also defines the data processing pipeline through user-defined functions."""
-    data_folder = hparams["data_folder"]
+    audio_data_folder = hparams["audio_data_folder"]
 
     train_data = sb.dataio.dataset.DynamicItemDataset.from_csv(
-        csv_path=hparams["train_csv"], replacements={"data_root": data_folder},
+        csv_path=hparams["train_csv"],
+        replacements={"data_root": audio_data_folder},
     )
 
     if hparams["sorting"] == "ascending":
@@ -331,7 +332,8 @@ def dataio_prepare(hparams):
             "sorting must be random, ascending or descending"
         )
     valid_data = sb.dataio.dataset.DynamicItemDataset.from_csv(
-        csv_path=hparams["valid_csv"], replacements={"data_root": data_folder},
+        csv_path=hparams["valid_csv"],
+        replacements={"data_root": audio_data_folder},
     )
     valid_data = valid_data.filtered_sorted(sort_key="duration")
 
@@ -340,7 +342,7 @@ def dataio_prepare(hparams):
     for csv_file in hparams["test_csv"]:
         name = Path(csv_file).stem
         test_datasets[name] = sb.dataio.dataset.DynamicItemDataset.from_csv(
-            csv_path=csv_file, replacements={"data_root": data_folder}
+            csv_path=csv_file, replacements={"data_root": audio_data_folder}
         )
         test_datasets[name] = test_datasets[name].filtered_sorted(
             sort_key="duration"
@@ -397,7 +399,7 @@ if __name__ == "__main__":
     sb.utils.distributed.ddp_init_group(run_opts)
 
     # 1.  # Dataset prep (parsing Librispeech)
-    from librispeech_prepare import prepare_librispeech  # noqa
+    from data_prepare import prepare_data  # noqa
 
     # Create experiment directory
     sb.create_experiment_directory(
@@ -408,13 +410,14 @@ if __name__ == "__main__":
 
     # multi-gpu (ddp) save data preparation
     run_on_main(
-        prepare_librispeech,
+        prepare_data,
         kwargs={
-            "data_folder": hparams["data_folder"],
+            "text_data_folder": hparams["text_data_folder"],
+            "audio_data_folder": hparams["audio_data_folder"],
             "tr_splits": hparams["train_splits"],
             "dev_splits": hparams["dev_splits"],
             "te_splits": hparams["test_splits"],
-            "save_folder": hparams["data_folder"],
+            "save_folder": hparams["save_folder"],
             "merge_lst": hparams["train_splits"],
             "merge_name": hparams["train_csv"],
             "skip_prep": hparams["skip_prep"],

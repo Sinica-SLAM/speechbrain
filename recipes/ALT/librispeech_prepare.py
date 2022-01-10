@@ -10,24 +10,21 @@ Mirco Ravanelli, Ju-Chieh Chou, Loren Lugosch 2020
 
 import os
 import csv
-import random
-from collections import Counter
 import logging
 import torchaudio
-from speechbrain.utils.data_utils import download_file, get_all_files
 from speechbrain.dataio.dataio import (
     load_pkl,
     save_pkl,
-    merge_csvs,
 )
 
 logger = logging.getLogger(__name__)
-OPT_FILE = "opt_librispeech_prepare.pkl"
+OPT_FILE = "opt_data_prepare.pkl"
 SAMPLERATE = 16000
 
 
-def prepare_librispeech(
-    data_folder,
+def prepare_data(
+    text_data_folder,
+    audio_data_folder,
     save_folder,
     tr_splits=[],
     dev_splits=[],
@@ -44,7 +41,7 @@ def prepare_librispeech(
 
     Arguments
     ---------
-    data_folder : str
+    audio_data_folder : str
         Path to the folder where the original LibriSpeech dataset is stored.
     tr_splits : list
         List of train splits to prepare from ['test-others','train-clean-100',
@@ -72,17 +69,17 @@ def prepare_librispeech(
 
     Example
     -------
-    >>> data_folder = 'datasets/LibriSpeech'
+    >>> audio_data_folder = 'datasets/LibriSpeech'
     >>> tr_splits = ['train-clean-100']
     >>> dev_splits = ['dev-clean']
     >>> te_splits = ['test-clean']
     >>> save_folder = 'librispeech_prepared'
-    >>> prepare_librispeech(data_folder, save_folder, tr_splits, dev_splits, te_splits)
+    >>> prepare_librispeech(audio_data_folder, save_folder, tr_splits, dev_splits, te_splits)
     """
 
     if skip_prep:
         return
-    data_folder = data_folder
+    audio_data_folder = audio_data_folder
     splits = tr_splits + dev_splits + te_splits
     save_folder = save_folder
     select_n_sentences = select_n_sentences
@@ -104,163 +101,43 @@ def prepare_librispeech(
     else:
         logger.info("Data_preparation...")
 
-    # Additional checks to make sure the data folder contains Librispeech
-    check_librispeech_folders(data_folder, splits)
+    # Restore and convert data from mp3 to wav
+    logger.info("Data restoring...")
+    restore_data(audio_data_folder)
 
     # create csv files for each split
-    all_texts = {}
     for split_index in range(len(splits)):
-
         split = splits[split_index]
 
-        wav_lst = get_all_files(
-            os.path.join(data_folder, split), match_and=[".flac"]
-        )
-
-        text_lst = get_all_files(
-            os.path.join(data_folder, split), match_and=["trans.txt"]
-        )
-
-        text_dict = text_to_dict(text_lst)
-        all_texts.update(text_dict)
-
-        if select_n_sentences is not None:
-            n_sentences = select_n_sentences[split_index]
-        else:
-            n_sentences = len(wav_lst)
-
         create_csv(
-            save_folder, wav_lst, text_dict, split, n_sentences,
+            audio_data_folder,
+            text_data_folder,
+            save_folder,
+            split,
+            select_n_sentences,
         )
-
-    # Merging csv file if needed
-    if merge_lst and merge_name is not None:
-        merge_files = [split_libri + ".csv" for split_libri in merge_lst]
-        merge_csvs(
-            data_folder=save_folder, csv_lst=merge_files, merged_csv=merge_name,
-        )
-
-    # Create lexicon.csv and oov.csv
-    if create_lexicon:
-        create_lexicon_and_oov_csv(all_texts, data_folder, save_folder)
 
     # saving options
     save_pkl(conf, save_opt)
 
 
-def create_lexicon_and_oov_csv(all_texts, data_folder, save_folder):
-    """
-    Creates lexicon csv files useful for training and testing a
-    grapheme-to-phoneme (G2P) model.
+def restore_data(audio_data_folder):
 
-    Arguments
-    ---------
-    all_text : dict
-        Dictionary containing text from the librispeech transcriptions
-    data_folder : str
-        Path to the folder where the original LibriSpeech dataset is stored.
-    save_folder : str
-        The directory where to store the csv files.
-    Returns
-    -------
-    None
-    """
-    # If the lexicon file does not exist, download it
-    lexicon_url = "http://www.openslr.org/resources/11/librispeech-lexicon.txt"
-    lexicon_path = os.path.join(save_folder, "librispeech-lexicon.txt")
-
-    if not os.path.isfile(lexicon_path):
-        logger.info(
-            "Lexicon file not found. Downloading from %s." % lexicon_url
-        )
-        download_file(lexicon_url, lexicon_path)
-
-    # Get list of all words in the transcripts
-    transcript_words = Counter()
-    for key in all_texts:
-        transcript_words.update(all_texts[key].split("_"))
-
-    # Get list of all words in the lexicon
-    lexicon_words = []
-    lexicon_pronunciations = []
-    with open(lexicon_path, "r") as f:
-        lines = f.readlines()
-        for line in lines:
-            word = line.split()[0]
-            pronunciation = line.split()[1:]
-            lexicon_words.append(word)
-            lexicon_pronunciations.append(pronunciation)
-
-    # Create lexicon.csv
-    header = "ID,duration,char,phn\n"
-    lexicon_csv_path = os.path.join(save_folder, "lexicon.csv")
-    with open(lexicon_csv_path, "w") as f:
-        f.write(header)
-        for idx in range(len(lexicon_words)):
-            separated_graphemes = [c for c in lexicon_words[idx]]
-            duration = len(separated_graphemes)
-            graphemes = " ".join(separated_graphemes)
-            pronunciation_no_numbers = [
-                p.strip("0123456789") for p in lexicon_pronunciations[idx]
-            ]
-            phonemes = " ".join(pronunciation_no_numbers)
-            line = (
-                ",".join([str(idx), str(duration), graphemes, phonemes]) + "\n"
+    for filename in os.listdir(audio_data_folder):
+        if filename.endswith(".mp3"):  # or .avi, .mpeg, whatever.
+            save_path = os.path.join(audio_data_folder, filename)
+            os.system(
+                "ffmpeg -hide_banner -y -i "
+                + save_path
+                + " -ar 16000 -ac 1 -f wav "
+                + save_path.replace("mp3", "wav")
             )
-            f.write(line)
-    logger.info("Lexicon written to %s." % lexicon_csv_path)
-
-    # Split lexicon.csv in train, validation, and test splits
-    split_lexicon(save_folder, [98, 1, 1])
-
-
-def split_lexicon(data_folder, split_ratio):
-    """
-    Splits the lexicon.csv file into train, validation, and test csv files
-
-    Arguments
-    ---------
-    data_folder : str
-        Path to the folder containing the lexicon.csv file to split.
-    split_ratio : list
-        List containing the training, validation, and test split ratio. Set it
-        to [80, 10, 10] for having 80% of material for training, 10% for valid,
-        and 10 for test.
-
-    Returns
-    -------
-    None
-    """
-    # Reading lexicon.csv
-    lexicon_csv_path = os.path.join(data_folder, "lexicon.csv")
-    with open(lexicon_csv_path, "r") as f:
-        lexicon_lines = f.readlines()
-    # Remove header
-    lexicon_lines = lexicon_lines[1:]
-
-    # Shuffle entries
-    random.shuffle(lexicon_lines)
-
-    # Selecting lines
-    header = "ID,duration,char,phn\n"
-
-    tr_snts = int(0.01 * split_ratio[0] * len(lexicon_lines))
-    train_lines = [header] + lexicon_lines[0:tr_snts]
-    valid_snts = int(0.01 * split_ratio[1] * len(lexicon_lines))
-    valid_lines = [header] + lexicon_lines[tr_snts : tr_snts + valid_snts]
-    test_lines = [header] + lexicon_lines[tr_snts + valid_snts :]
-
-    # Saving files
-    with open(os.path.join(data_folder, "lexicon_tr.csv"), "w") as f:
-        f.writelines(train_lines)
-    with open(os.path.join(data_folder, "lexicon_dev.csv"), "w") as f:
-        f.writelines(valid_lines)
-    with open(os.path.join(data_folder, "lexicon_test.csv"), "w") as f:
-        f.writelines(test_lines)
+        else:
+            continue
 
 
 def create_csv(
-    save_folder, wav_lst, text_dict, split, select_n_sentences,
+    audio_data_folder, text_data_folder, save_folder, split, select_n_sentences
 ):
     """
     Create the dataset csv file given a list of wav files.
@@ -289,34 +166,83 @@ def create_csv(
     msg = "Creating csv lists in  %s..." % (csv_file)
     logger.info(msg)
 
-    csv_lines = [["ID", "duration", "wav", "spk_id", "wrd"]]
+    csv_lines = [["ID", "duration", "start", "stop", "wav", "spk_id", "wrd"]]
 
     snt_cnt = 0
-    # Processing all the wav files in wav_lst
-    for wav_file in wav_lst:
 
-        snt_id = wav_file.split("/")[-1].replace(".flac", "")
-        spk_id = "-".join(snt_id.split("-")[0:2])
-        wrds = text_dict[snt_id]
+    if split != "dali_talt":
+        seg_path = os.path.join(text_data_folder, split, "segments")
+        text_path = os.path.join(text_data_folder, split, "text")
 
-        signal, fs = torchaudio.load(wav_file)
-        signal = signal.squeeze(0)
-        duration = signal.shape[0] / SAMPLERATE
+        seg_lst = open(seg_path, "r").read().split("\n")
+        text_lst = open(text_path, "r").read().split("\n")
 
-        csv_line = [
-            snt_id,
-            str(duration),
-            wav_file,
-            spk_id,
-            str(" ".join(wrds.split("_"))),
-        ]
+        # Processing all the wav files in wav_lst
+        for seg_file, text_file in zip(seg_lst, text_lst):
 
-        #  Appending current file to the csv_lines list
-        csv_lines.append(csv_line)
-        snt_cnt = snt_cnt + 1
+            if seg_file and text_file:
 
-        if snt_cnt == select_n_sentences:
-            break
+                snt_id = seg_file.split(" ")[0]
+                spk_id = seg_file.split(" ")[1]
+                wrds = " ".join(
+                    [str(elem) for elem in text_file.split(" ")[1:]]
+                )
+
+                start = seg_file.split(" ")[-2]
+                stop = seg_file.split(" ")[-1]
+
+                duration = float(stop) - float(start)
+                wav_file = os.path.join(
+                    audio_data_folder, spk_id.split("-")[-1] + ".wav"
+                )
+
+                csv_line = [
+                    snt_id,
+                    str(duration),
+                    start,
+                    stop,
+                    wav_file,
+                    spk_id,
+                    str(" ".join(wrds.split("_"))),
+                ]
+
+                #  Appending current file to the csv_lines list
+                csv_lines.append(csv_line)
+                snt_cnt = snt_cnt + 1
+
+                if snt_cnt == select_n_sentences:
+                    break
+
+    else:
+        csv_lines = [["spk_id", "duration", "wav", "wrd"]]
+        text_path = os.path.join(text_data_folder, split, "text")
+        text_lst = open(text_path, "r").read().split("\n")
+
+        for text_file in text_lst:
+            if text_file:
+                spk_id = text_file.split(" ")[0]
+                wrds = " ".join(
+                    [str(elem) for elem in text_file.split(" ")[1:]]
+                )
+
+                wav_file = os.path.join(
+                    audio_data_folder, spk_id.split("-")[-1] + ".wav"
+                )
+
+                signal, fs = torchaudio.load(wav_file)
+                print(wav_file)
+                signal = signal.squeeze(0)
+                duration = signal.shape[0] / SAMPLERATE
+
+                csv_line = [
+                    spk_id,
+                    duration,
+                    wav_file,
+                    str(" ".join(wrds.split("_"))),
+                ]
+
+                #  Appending current file to the csv_lines list
+                csv_lines.append(csv_line)
 
     # Writing the csv_lines
     with open(csv_file, mode="w") as csv_f:
@@ -372,56 +298,3 @@ def skip(splits, save_folder, conf):
             skip = False
 
     return skip
-
-
-def text_to_dict(text_lst):
-    """
-    This converts lines of text into a dictionary-
-
-    Arguments
-    ---------
-    text_lst : str
-        Path to the file containing the librispeech text transcription.
-
-    Returns
-    -------
-    dict
-        The dictionary containing the text transcriptions for each sentence.
-
-    """
-    # Initialization of the text dictionary
-    text_dict = {}
-    # Reading all the transcription files is text_lst
-    for file in text_lst:
-        with open(file, "r") as f:
-            # Reading all line of the transcription file
-            for line in f:
-                line_lst = line.strip().split(" ")
-                text_dict[line_lst[0]] = "_".join(line_lst[1:])
-    return text_dict
-
-
-def check_librispeech_folders(data_folder, splits):
-    """
-    Check if the data folder actually contains the LibriSpeech dataset.
-
-    If it does not, an error is raised.
-
-    Returns
-    -------
-    None
-
-    Raises
-    ------
-    OSError
-        If LibriSpeech is not found at the specified path.
-    """
-    # Checking if all the splits exist
-    for split in splits:
-        split_folder = os.path.join(data_folder, split)
-        if not os.path.exists(split_folder):
-            err_msg = (
-                "the folder %s does not exist (it is expected in the "
-                "Librispeech dataset)" % split_folder
-            )
-            raise OSError(err_msg)
