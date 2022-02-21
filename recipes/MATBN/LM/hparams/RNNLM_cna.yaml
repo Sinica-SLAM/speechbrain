@@ -44,11 +44,11 @@ test_dataloader_opts:
   num_workers: !ref <num_workers>
 
 # Model parameters
-emb_size: 256
+emb_size: 128
 activation: !name:torch.nn.LeakyReLU
 dropout: 0.2
 rnn_layers: 2
-rnn_neurons: 512
+rnn_neurons: 1024
 dnn_blocks: 1
 dnn_neurons: 256
 
