@@ -836,3 +836,212 @@ class PositionalwiseFeedForward(nn.Module):
         x = x.permute(1, 0, 2)
 
         return x
+
+
+class GlobalWiseMultiheadAttention(nn.Module):
+    def __init__(
+        self,
+        nhead,
+        d_model,
+        query_vocab_size,
+        key_vocab_size,
+        dropout=0.0,
+        bias=True,
+        add_bias_kv=False,
+        kdim=None,
+        vdim=None,
+        is_mask_diagonal=False,
+    ):
+        super().__init__()
+        """Construct an MultiHeadedAttention object."""
+        assert d_model % nhead == 0
+        # We assume d_v always equals d_k
+
+        kdim = kdim if kdim else d_model
+        vdim = vdim if vdim else d_model
+
+        self.d_k = d_model // nhead
+        self.h = nhead
+        self.linear_q = nn.Linear(d_model, d_model, bias=bias)
+        self.linear_k = nn.Linear(d_model, kdim, bias=add_bias_kv)
+        self.linear_v = nn.Linear(d_model, vdim, bias=add_bias_kv)
+        self.linear_out = nn.Linear(d_model, d_model, bias=bias)
+        self.attn = None
+        self.dropout = nn.Dropout(p=dropout)
+        self.query_vocab_size = query_vocab_size
+        self.key_vocab_size = key_vocab_size
+        self.is_mask_diagonal = is_mask_diagonal
+
+        if next(self.parameters()).dtype == torch.float16:
+            self.attn_fill_value = -65000
+        else:
+            self.attn_fill_value = -float("inf")
+
+        self.global_scores = torch.zeros(
+            nhead, query_vocab_size, key_vocab_size, requires_grad=False,
+        ).cuda()
+        self.current_global_scores = torch.zeros(
+            nhead, query_vocab_size, key_vocab_size, requires_grad=False,
+        ).cuda()
+
+    def update_global_scores(self):
+        self.global_scores += self.current_global_scores
+        self.current_global_scores.zero_()
+
+    def forward_qkv(self, query, key, value):
+        """Transform query, key and value.
+        Args:
+            query (torch.Tensor): Query tensor (#batch, time1, size).
+            key (torch.Tensor): Key tensor (#batch, time2, size).
+            value (torch.Tensor): Value tensor (#batch, time2, size).
+        Returns:
+            torch.Tensor: Transformed query tensor (#batch, n_head, time1, d_k).
+            torch.Tensor: Transformed key tensor (#batch, n_head, time2, d_k).
+            torch.Tensor: Transformed value tensor (#batch, n_head, time2, d_k).
+        """
+        batch_size = query.size(0)
+        q = self.linear_q(query).view(batch_size, -1, self.h, self.d_k)
+        k = self.linear_k(key).view(batch_size, -1, self.h, self.d_k)
+        v = self.linear_v(value).view(batch_size, -1, self.h, self.d_k)
+        q = q.transpose(1, 2)  # (batch, head, time1, d_k)
+        k = k.transpose(1, 2)  # (batch, head, time2, d_k)
+        v = v.transpose(1, 2)  # (batch, head, time2, d_k)
+
+        return q, k, v
+
+    def forward_attention(self, value, scores, query_id, key_id):
+        """Compute attention context vector.
+        Args:
+            value (torch.Tensor): Transformed value (#batch, n_head, time2, d_k).
+            scores (torch.Tensor): Attention score (#batch, n_head, time1, time2).
+            mask (torch.Tensor): Mask (#batch, 1, time2) or (#batch, time1, time2).
+        Returns:
+            torch.Tensor: Transformed value (#batch, time1, d_model)
+                weighted by the attention score (#batch, time1, time2).
+        """
+        batch_size = value.size(0)
+        self.attn = torch.softmax(scores, dim=-1)  # (batch, head, time1, time2)
+
+        # Calculate the global-wise attention
+        global_attn = self.calculate_global_attention(
+            self.attn.detach().clone(), query_id, key_id,
+        )
+
+        self.attn = self.attn + 0.1 * global_attn
+        self.attn = torch.nn.functional.normalize(self.attn, p=1, dim=-1)
+
+        p_attn = self.dropout(self.attn)
+        x = torch.matmul(p_attn, value)  # (batch, head, time1, d_k)
+        x = (
+            x.transpose(1, 2)
+            .contiguous()
+            .view(batch_size, -1, self.h * self.d_k)
+        )  # (batch, time1, d_model)
+
+        return self.linear_out(x)  # (batch, time1, d_model)
+
+    def calculate_global_attention(
+        self, scores, query_id, key_id
+    ) -> torch.Tensor:
+        batch_size, q_len = query_id.shape
+        _, k_len = key_id.shape
+
+        # q_len different possible combinations
+        q_k_id = torch.empty(batch_size, q_len * k_len, 2, dtype=torch.long)
+
+        for b in range(batch_size):
+            q_k_id[b] = torch.cartesian_prod(query_id[b], key_id[b])
+
+        q_k_id = q_k_id.unsqueeze(1).repeat((1, self.h, 1, 1))
+
+        # For index, each batch needs n_head
+        b_head = (
+            torch.arange(self.h).unsqueeze(1).expand((self.h, q_len * k_len))
+        )
+        b_head = b_head.unsqueeze(0).repeat((batch_size, 1, 1))
+        b_head = b_head.view((batch_size, self.h, q_len * k_len))
+
+        index = (b_head, q_k_id[:, :, :, 0], q_k_id[:, :, :, 1])
+
+        # Mask out "self" for each head
+        if self.is_mask_diagonal:
+            scores = scores.view((-1, q_len, k_len))
+            for i in range(scores.size(0)):
+                scores[i].fill_diagonal_(0)
+            scores = scores.view((batch_size, -1, q_len, k_len))
+
+        # Add current scores to current global scores
+        # And return global scores based on the given q/k
+        self.current_global_scores = torch.index_put(
+            self.current_global_scores,
+            index,
+            scores.view(batch_size, self.h, -1),
+        )
+
+        # Get global scores
+        index = torch.stack(
+            (b_head, q_k_id[:, :, :, 0], q_k_id[:, :, :, 1]), dim=-1
+        )
+        index = index.view((-1, 3))
+        index = (index[:, 0], index[:, 1], index[:, 2])
+
+        return self.global_scores[index].view(scores.size())
+
+    def forward(
+        self,
+        query,
+        key,
+        value,
+        query_id,
+        key_id,
+        key_padding_mask=None,
+        attn_mask=None,
+        return_attn_weights=True,
+        pos_embs=None,
+    ):
+        """Compute scaled dot product attention.
+        Args:
+            query (torch.Tensor): Query tensor (#batch, time1, size).
+            key (torch.Tensor): Key tensor (#batch, time2, size).
+            value (torch.Tensor): Value tensor (#batch, time2, size).
+            mask (torch.Tensor): Mask tensor (#batch, 1, time2) or
+                (#batch, time1, time2).
+        Returns:
+            torch.Tensor: Output tensor (#batch, time1, d_model).
+        """
+        q, k, v = self.forward_qkv(query, key, value)
+        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
+        # compute attention probability
+        batch_size = query.shape[0]
+        q_len = query.shape[1]
+        k_len = key.shape[1]
+
+        if pos_embs is not None:
+            if attn_mask is not None:
+                attn_mask += pos_embs
+            else:
+                attn_mask = pos_embs
+
+        if attn_mask is not None:
+            if attn_mask.ndim == 2:
+                attn_mask = attn_mask.view(1, 1, q_len, k_len)
+            else:
+                attn_mask = attn_mask.view(-1, self.num_heads, q_len, k_len)
+
+            if attn_mask.dtype == torch.bool:
+                scores = scores.masked_fill(attn_mask, self.attn_fill_value)
+            else:
+                scores += attn_mask
+
+        if key_padding_mask is not None:
+            scores = scores.masked_fill(
+                key_padding_mask.view(batch_size, 1, 1, k_len),
+                self.attn_fill_value,
+            )
+
+        out = self.forward_attention(v, scores, query_id, key_id)
+
+        if return_attn_weights:
+            return out, scores
+        else:
+            return out

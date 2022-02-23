@@ -68,6 +68,12 @@ class TransformerInterface(nn.Module):
     causal: bool, optional
         Whether the encoder should be causal or not (the decoder is always causal).
         If causal the Conformer convolutional layer is causal.
+    query_vocab_size: int, optional
+        Vocab size of query.
+        Used for global wise attention.
+    key_vocab_size: int, optional
+        Vocab size of key.
+        Used for global wise attention.
     """
 
     def __init__(
@@ -90,13 +96,16 @@ class TransformerInterface(nn.Module):
         attention_type: Optional[str] = "regularMHA",
         max_length: Optional[int] = 2500,
         causal: Optional[bool] = False,
+        query_vocab_size: Optional[int] = None,
+        key_vocab_size: Optional[int] = None,
+        is_mask_diagonal: bool = False,
     ):
         super().__init__()
         self.causal = causal
         self.attention_type = attention_type
         self.positional_encoding_type = positional_encoding
 
-        assert attention_type in ["regularMHA", "RelPosMHAXL"]
+        assert attention_type in ["regularMHA", "RelPosMHAXL", "GlobalMHA"]
         assert positional_encoding in ["fixed_abs_sine", None]
 
         assert (
@@ -131,6 +140,9 @@ class TransformerInterface(nn.Module):
                     normalize_before=normalize_before,
                     causal=self.causal,
                     attention_type=self.attention_type,
+                    query_vocab_size=query_vocab_size,
+                    key_vocab_size=key_vocab_size,
+                    is_mask_diagonal=is_mask_diagonal,
                 )
             elif encoder_module == "conformer":
                 self.encoder = ConformerEncoder(
@@ -248,6 +260,12 @@ class TransformerEncoderLayer(nn.Module):
     attention_type: str, optional
         Type of attention layer used in all Transformer or Conformer layers.
         e.g. regularMHA or RelPosMHA.
+    query_vocab_size: int, optional
+        Vocab size of query.
+        Used for global wise attention.
+    key_vocab_size: int, optional
+        Vocab size of key.
+        Used for global wise attention.
 
     Example
     -------
@@ -271,9 +289,13 @@ class TransformerEncoderLayer(nn.Module):
         normalize_before=False,
         attention_type="regularMHA",
         causal=False,
+        query_vocab_size=None,
+        key_vocab_size=None,
+        is_mask_diagonal=False,
     ):
         super().__init__()
 
+        self.attention_type = attention_type
         if attention_type == "regularMHA":
             self.self_att = sb.nnet.attention.MultiheadAttention(
                 nhead=nhead,
@@ -286,6 +308,17 @@ class TransformerEncoderLayer(nn.Module):
         elif attention_type == "RelPosMHAXL":
             self.self_att = sb.nnet.attention.RelPosMHAXL(
                 d_model, nhead, dropout, mask_pos_future=causal
+            )
+        elif attention_type == "GlobalMHA":
+            self.self_att = sb.nnet.attention.GlobalWiseMultiheadAttention(
+                nhead=nhead,
+                d_model=d_model,
+                dropout=dropout,
+                kdim=kdim,
+                vdim=vdim,
+                query_vocab_size=query_vocab_size,
+                key_vocab_size=key_vocab_size,
+                is_mask_diagonal=is_mask_diagonal,
             )
 
         self.pos_ffn = sb.nnet.attention.PositionalwiseFeedForward(
@@ -308,6 +341,7 @@ class TransformerEncoderLayer(nn.Module):
         src_mask: Optional[torch.Tensor] = None,
         src_key_padding_mask: Optional[torch.Tensor] = None,
         pos_embs: Optional[torch.Tensor] = None,
+        src_id: Optional[torch.Tensor] = None,
     ):
         """
         Arguments
@@ -324,14 +358,26 @@ class TransformerEncoderLayer(nn.Module):
         else:
             src1 = src
 
-        output, self_attn = self.self_att(
-            src1,
-            src1,
-            src1,
-            attn_mask=src_mask,
-            key_padding_mask=src_key_padding_mask,
-            pos_embs=pos_embs,
-        )
+        if self.attention_type == "GlobalMHA":
+            output, self_attn = self.self_att(
+                src1,
+                src1,
+                src1,
+                attn_mask=src_mask,
+                key_padding_mask=src_key_padding_mask,
+                pos_embs=pos_embs,
+                query_id=src_id,
+                key_id=src_id,
+            )
+        else:
+            output, self_attn = self.self_att(
+                src1,
+                src1,
+                src1,
+                attn_mask=src_mask,
+                key_padding_mask=src_key_padding_mask,
+                pos_embs=pos_embs,
+            )
 
         # add & norm
         src = src + self.dropout1(output)
@@ -374,6 +420,12 @@ class TransformerEncoder(nn.Module):
     input_module: torch class
         The module to process the source input feature to expected
         feature dimension (Optional).
+    query_vocab_size: int, optional
+        Vocab size of query.
+        Used for global wise attention.
+    key_vocab_size: int, optional
+        Vocab size of key.
+        Used for global wise attention.
 
     Example
     -------
@@ -399,6 +451,9 @@ class TransformerEncoder(nn.Module):
         normalize_before=False,
         causal=False,
         attention_type="regularMHA",
+        query_vocab_size=None,
+        key_vocab_size=None,
+        is_mask_diagonal=False,
     ):
         super().__init__()
 
@@ -415,6 +470,9 @@ class TransformerEncoder(nn.Module):
                     normalize_before=normalize_before,
                     causal=causal,
                     attention_type=attention_type,
+                    query_vocab_size=query_vocab_size,
+                    key_vocab_size=key_vocab_size,
+                    is_mask_diagonal=is_mask_diagonal,
                 )
                 for i in range(num_layers)
             ]
@@ -427,6 +485,7 @@ class TransformerEncoder(nn.Module):
         src_mask: Optional[torch.Tensor] = None,
         src_key_padding_mask: Optional[torch.Tensor] = None,
         pos_embs: Optional[torch.Tensor] = None,
+        src_id: Optional[torch.Tensor] = None,
     ):
         """
         Arguments
@@ -446,6 +505,7 @@ class TransformerEncoder(nn.Module):
                 src_mask=src_mask,
                 src_key_padding_mask=src_key_padding_mask,
                 pos_embs=pos_embs,
+                src_id=src_id,
             )
             attention_lst.append(attention)
         output = self.norm(output)

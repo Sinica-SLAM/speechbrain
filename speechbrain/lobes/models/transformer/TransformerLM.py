@@ -67,6 +67,9 @@ class TransformerLM(TransformerInterface):
         max_length=2500,
         causal=True,
         attention_type="regularMHA",
+        query_vocab_size=None,
+        key_vocab_size=None,
+        is_mask_diagonal=False,
     ):
         super().__init__(
             d_model=d_model,
@@ -81,6 +84,9 @@ class TransformerLM(TransformerInterface):
             max_length=max_length,
             causal=causal,
             attention_type=attention_type,
+            query_vocab_size=query_vocab_size,
+            key_vocab_size=key_vocab_size,
+            is_mask_diagonal=is_mask_diagonal,
         )
 
         self.d_embedding = d_embedding
@@ -156,3 +162,83 @@ class TransformerLM(TransformerInterface):
             src_key_padding_mask = get_key_padding_mask(src, pad_idx)
 
         return src_mask, src_key_padding_mask
+
+
+class GlobalTransformerLM(TransformerLM):
+    def __init__(
+        self,
+        vocab,
+        d_model=512,
+        nhead=8,
+        num_encoder_layers=12,
+        num_decoder_layers=0,
+        d_ffn=2048,
+        dropout=0.1,
+        activation=nn.ReLU,
+        positional_encoding="fixed_abs_sine",
+        normalize_before=False,
+        d_embedding=None,
+        max_length=2500,
+        causal=True,
+        query_vocab_size=1000,
+        key_vocab_size=1000,
+        is_mask_diagonal=False,
+    ):
+        super().__init__(
+            vocab,
+            d_model,
+            nhead,
+            num_encoder_layers,
+            num_decoder_layers,
+            d_ffn,
+            dropout,
+            activation,
+            positional_encoding,
+            normalize_before,
+            d_embedding,
+            max_length,
+            causal,
+            "GlobalMHA",
+            query_vocab_size,
+            key_vocab_size,
+            is_mask_diagonal,
+        )
+
+    def update_global_scores(self):
+        if self.num_encoder_layers > 0:
+            for layer in self.encoder.layers:
+                layer.self_att.update_global_scores()
+
+    def forward(self, src, hx=None):
+        """
+        Arguments
+        ---------
+        src : tensor
+            The sequence to the encoder (required).
+        """
+        src_mask, src_key_padding_mask = self.make_masks(src)
+        src_id = src
+        src = self.custom_src_module(src)
+        if self.embedding_proj is not None:
+            src = self.embedding_proj(src)
+        src = src + self.positional_encoding(src)
+        encoder_out = None
+        if self.num_encoder_layers > 0:
+            encoder_out, _ = self.encoder(
+                src=src,
+                src_mask=src_mask,
+                src_key_padding_mask=src_key_padding_mask,
+                src_id=src_id,
+            )
+
+        if self.num_decoder_layers > 0:
+            encoder_out, _ = self.decoder(
+                src=src,
+                tgt=src,
+                tgt_mask=src_mask,
+                tgt_key_padding_mask=src_key_padding_mask,
+            )
+
+        pred = self.output_proj(encoder_out)
+
+        return pred
