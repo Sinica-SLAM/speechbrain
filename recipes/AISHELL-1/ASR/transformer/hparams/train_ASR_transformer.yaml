@@ -106,7 +106,6 @@ Transformer: !new:speechbrain.lobes.models.transformer.TransformerASR.Transforme
     dropout: !ref <transformer_dropout>
     activation: !ref <activation>
     normalize_before: True
-    attention_type: globalMHA
 
 tokenizer: !new:sentencepiece.SentencePieceProcessor
 
