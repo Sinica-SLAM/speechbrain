@@ -9,7 +9,7 @@
 # Seed needs to be set at top of yaml, before objects with parameters are made
 seed: 2223
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/Transformer_global_layer_16_w_0.1/<seed>
+output_folder: !ref results/Transformer_global_w_0.1/<seed>
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
@@ -27,9 +27,9 @@ tokenizer_file: ../Tokenizer/results/transformer_tokenizer_bpe5000/5000_unigram.
 
 # Training parameters
 number_of_epochs: 20
-batch_size: 1
+batch_size: 128
 lr: 10
-accu_steps: 128 # Gradient accumulation to simulate large batch training
+accu_steps: 1 # Gradient accumulation to simulate large batch training
 ckpt_interval_minutes: 15 # save checkpoint every N min
 sorting: random
 
@@ -38,6 +38,7 @@ train_dataloader_opts:
     batch_size: !ref <batch_size>
     shuffle: True
     pin_memory: True
+    num_workers: 32
 
 valid_dataloader_opts:
     batch_size: 1
@@ -54,14 +55,14 @@ unk_index: 0
 pad_index: 0
 
 # model params
-d_model: 256
+d_model: 512
 
 
 # Functions
 model: !new:speechbrain.lobes.models.transformer.TransformerLM.GlobalTransformerLM # yamllint disable-line rule:line-length
     vocab: !ref <output_neurons>
     d_model: !ref <d_model>
-    nhead: 8
+    nhead: 4
     num_encoder_layers: 16
     num_decoder_layers: 0
     d_ffn: 2048
@@ -70,6 +71,7 @@ model: !new:speechbrain.lobes.models.transformer.TransformerLM.GlobalTransformer
     normalize_before: False
     query_vocab_size: !ref <output_neurons>
     key_vocab_size: !ref <output_neurons>
+    global_weight: 0.1
     is_mask_diagonal: True
 
 modules:

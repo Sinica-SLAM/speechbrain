@@ -845,6 +845,7 @@ class GlobalWiseMultiheadAttention(nn.Module):
         d_model,
         query_vocab_size,
         key_vocab_size,
+        global_weight=0.1,
         dropout=0.0,
         bias=True,
         add_bias_kv=False,
@@ -870,6 +871,7 @@ class GlobalWiseMultiheadAttention(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
         self.query_vocab_size = query_vocab_size
         self.key_vocab_size = key_vocab_size
+        self.global_weight = global_weight
         self.is_mask_diagonal = is_mask_diagonal
 
         if next(self.parameters()).dtype == torch.float16:
@@ -927,7 +929,7 @@ class GlobalWiseMultiheadAttention(nn.Module):
             self.attn.detach().clone(), query_id, key_id,
         )
 
-        self.attn = self.attn + 0.1 * global_attn
+        self.attn = self.attn + self.global_weight * global_attn
         self.attn = torch.nn.functional.normalize(self.attn, p=1, dim=-1)
 
         p_attn = self.dropout(self.attn)
@@ -965,10 +967,11 @@ class GlobalWiseMultiheadAttention(nn.Module):
 
         # Mask out "self" for each head
         if self.is_mask_diagonal:
-            scores = scores.view((-1, q_len, k_len))
-            for i in range(scores.size(0)):
-                scores[i].fill_diagonal_(0)
-            scores = scores.view((batch_size, -1, q_len, k_len))
+            mask = torch.eye(n=q_len, m=k_len, dtype=torch.bool)
+            mask = torch.unsqueeze(mask, 0)
+            mask = mask.repeat((batch_size * self.h, 1, 1))
+            mask = mask.view(batch_size, -1, q_len, k_len)
+            scores[mask] = 0
 
         # Add current scores to current global scores
         # And return global scores based on the given q/k

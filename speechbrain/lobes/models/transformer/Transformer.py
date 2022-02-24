@@ -84,6 +84,7 @@ class TransformerInterface(nn.Module):
         num_decoder_layers=6,
         d_ffn=2048,
         dropout=0.1,
+        global_weight=0.1,
         activation=nn.ReLU,
         custom_src_module=None,
         custom_tgt_module=None,
@@ -136,6 +137,7 @@ class TransformerInterface(nn.Module):
                     d_ffn=d_ffn,
                     d_model=d_model,
                     dropout=dropout,
+                    global_weight=global_weight,
                     activation=activation,
                     normalize_before=normalize_before,
                     causal=self.causal,
@@ -251,6 +253,8 @@ class TransformerEncoderLayer(nn.Module):
         Dimension of the value.
     dropout: int, optional
         The dropout value.
+    global_weight: float, optional
+        The weight of global attention.
     activation: torch.nn.Module, optional
         The activation function for Feed-Forward Netowrk layer,
         e.g., relu or gelu or swish.
@@ -266,6 +270,8 @@ class TransformerEncoderLayer(nn.Module):
     key_vocab_size: int, optional
         Vocab size of key.
         Used for global wise attention.
+    is_mask_diagonal: bool, optional
+        Whether mask out the diagonal attention scores in global-wise attention.
 
     Example
     -------
@@ -285,6 +291,7 @@ class TransformerEncoderLayer(nn.Module):
         kdim=None,
         vdim=None,
         dropout=0.0,
+        global_weight=0.1,
         activation=nn.ReLU,
         normalize_before=False,
         attention_type="regularMHA",
@@ -314,6 +321,7 @@ class TransformerEncoderLayer(nn.Module):
                 nhead=nhead,
                 d_model=d_model,
                 dropout=dropout,
+                global_weight=global_weight,
                 kdim=kdim,
                 vdim=vdim,
                 query_vocab_size=query_vocab_size,
@@ -447,6 +455,7 @@ class TransformerEncoder(nn.Module):
         kdim=None,
         vdim=None,
         dropout=0.0,
+        global_weight=0.1,
         activation=nn.ReLU,
         normalize_before=False,
         causal=False,
@@ -466,6 +475,7 @@ class TransformerEncoder(nn.Module):
                     kdim=kdim,
                     vdim=vdim,
                     dropout=dropout,
+                    global_weight=global_weight,
                     activation=activation,
                     normalize_before=normalize_before,
                     causal=causal,
