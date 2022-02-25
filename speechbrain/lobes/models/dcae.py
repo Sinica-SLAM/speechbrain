@@ -5,11 +5,19 @@ Author
 * YAO-FEI, CHENG
 """
 
-import torch  # noqa 42
+import logging
+
+from math import ceil
 from typing import List, Optional
 
+import torch  # noqa 42
+
 from speechbrain.nnet.activations import Swish
+from speechbrain.lobes.models.transformer.Conformer import ConformerEncoder
 from speechbrain.lobes.models.transformer.TransformerASR import TransformerASR
+from speechbrain.lobes.models.transformer.Transformer import TransformerEncoder
+
+logger = logging.getLogger(__name__)
 
 
 class PaddedSubsample(torch.nn.Module):
@@ -42,11 +50,11 @@ class PaddedSubsample(torch.nn.Module):
             )
 
         out_channel = input_size
-        for i, stride in enumerate(strides):
-            out_channel = out_channel // stride
+        for kernel, stride in zip(kernel_sizes, strides):
+            out_channel = ceil((out_channel - kernel) / stride) + 1
 
         self.out = torch.nn.Sequential(
-            torch.nn.Linear(output_size * out_channel, output_size, bias=bias,),
+            torch.nn.Linear(output_size * out_channel, output_size, bias=bias),
             activation(),
         )
 
@@ -216,14 +224,47 @@ class DcaeASR(TransformerASR):
             activation(),
         )
 
-        self.reconstructor = PaddedUpSample(
-            input_size=d_model,
-            output_size=input_size,
+        self.upsampler = PaddedUpSample(
+            input_size=2 * d_model,
+            output_size=d_model,
             kernel_sizes=kernel_sizes[::-1],
             strides=strides[::-1],
             bias=bias,
             activation=activation,
         )
+
+        if encoder_module == "transformer":
+            self.reconstructor = TransformerEncoder(
+                nhead=nhead,
+                num_layers=num_encoder_layers,
+                d_ffn=d_ffn,
+                d_model=d_model,
+                dropout=dropout,
+                activation=activation,
+                normalize_before=normalize_before,
+                causal=causal,
+                attention_type=attention_type,
+            )
+        elif encoder_module == "conformer":
+            self.reconstructor = ConformerEncoder(
+                nhead=nhead,
+                num_layers=num_encoder_layers,
+                d_ffn=d_ffn,
+                d_model=d_model,
+                dropout=dropout,
+                activation=conformer_activation,
+                kernel_size=kernel_size,
+                bias=bias,
+                causal=self.causal,
+                attention_type=self.attention_type,
+            )
+            assert (
+                normalize_before
+            ), "normalize_before must be True for Conformer"
+
+            assert (
+                conformer_activation is not None
+            ), "conformer_activation must not be None"
 
     def forward(self, src, tgt, wav_len=None, pad_idx=0):
         """
@@ -272,8 +313,23 @@ class DcaeASR(TransformerASR):
         encoder_out = self.repr_cnn(encoder_out)
         encoder_out = encoder_out.transpose(1, 2)
 
-        reconstructed_src = self.reconstructor(
-            encoder_out[:, :, : self.d_model], width_pads, height_pads
+        reconstructed_src = self.upsampler(encoder_out, width_pads, height_pads)
+
+        # Re-calculate padding mask after being upsampled
+        rec_src_key_padding_mask = None
+        rec_src_mask = None
+        if wav_len is not None:
+            abs_len = torch.round(wav_len * reconstructed_src.shape[1])
+            rec_src_key_padding_mask = (
+                torch.arange(reconstructed_src.shape[1])[None, :].to(abs_len)
+                > abs_len[:, None]
+            )
+
+        reconstructed_src, _ = self.reconstructor(
+            src=reconstructed_src,
+            src_mask=rec_src_mask,
+            src_key_padding_mask=rec_src_key_padding_mask,
+            pos_embs=pos_embs_encoder,
         )
 
         tgt = self.custom_tgt_module(tgt)

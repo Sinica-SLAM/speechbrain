@@ -1,15 +1,15 @@
 #!/usr/bin/env/python3
 """
 
-AISHELL-1 transformer model recipe. (Adapted from the LibriSpeech recipe.)
+AISHELL-1 DCAE model recipe. (Adapted from the LibriSpeech recipe.)
 
 """
 
+import os
 import sys
 import time
 import torch
 import logging
-
 import speechbrain as sb
 
 from speechbrain.dataio.dataloader import LoopedLoader
@@ -18,6 +18,32 @@ from speechbrain.utils.distributed import run_on_main
 from tqdm.contrib import tqdm
 from hyperpyyaml import load_hyperpyyaml
 from torch.utils.data import DataLoader
+
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:
+    err_msg = (
+        """
+        The optional dependency tensorboard must be installed to run this recipe.\n
+        """
+        """
+        Install using `pip install tensorboard`.\n
+        """
+    )
+    raise ImportError(err_msg)
+
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    err_msg = (
+        """
+        The optional dependency matplotlib must be installed to run this recipe.\n
+        """
+        """
+        Install using `pip install matplotlib`.\n
+        """
+    )
+    raise ImportError(err_msg)
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +67,19 @@ class ASR(sb.core.Brain):
         self.avg_train_loss_ctc = 0
         self.avg_train_loss_seq = 0
 
+        # Tensorboard initialization
+        tensorboard_path = self.hparams.output_folder + "/tensorboard"
+        self.summary_writer = SummaryWriter(log_dir=tensorboard_path)
+        self.fbanks = []
+        self.train_fbank_ids = []
+        self.valid_fbank_ids = []
+
     def compute_forward(self, batch, stage):
         """Forward computations from the waveform batches to the output probabilities."""
         batch = batch.to(self.device)
         wavs, wav_lens = batch.sig
         tokens_bos, _ = batch.tokens_bos
+        batch_size = wavs.size()[0]
 
         # Add augmentation if specified
         if stage == sb.Stage.TRAIN:
@@ -60,9 +94,12 @@ class ASR(sb.core.Brain):
         feats = self.hparams.compute_features(wavs)
         feats = self.hparams.normalize(feats, wav_lens, epoch=current_epoch)
 
+        # Prepare ground-truth FBank for reconstruction loss
+        original_feats = feats
         if stage == sb.Stage.TRAIN:
-            if hasattr(self.hparams, "augmentation"):
-                feats = self.hparams.augmentation(feats)
+            if hasattr(self.modules, "env_corrupt"):
+                original_feats = feats[:batch_size, :, :]
+                original_feats = original_feats.repeat(2, 1, 1)
 
         # forward modules
         enc_out, reconstructed_feats, pred = self.hparams.DCAE(
@@ -76,6 +113,9 @@ class ASR(sb.core.Brain):
         # output layer for seq2seq log-probabilities
         pred = self.modules.seq_lin(pred)
         p_seq = self.hparams.log_softmax(pred)
+
+        # output layer for reconstruction loss
+        reconstructed_feats = self.modules.rec_lin(reconstructed_feats)
 
         # Compute outputs
         hyps = None
@@ -91,7 +131,7 @@ class ASR(sb.core.Brain):
         elif stage == sb.Stage.TEST:
             hyps, _ = self.hparams.test_search(enc_out.detach(), wav_lens)
 
-        return p_ctc, p_seq, wav_lens, hyps, reconstructed_feats, feats
+        return p_ctc, p_seq, wav_lens, hyps, reconstructed_feats, original_feats
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss (CTC+NLL) given predictions and targets."""
@@ -121,17 +161,16 @@ class ASR(sb.core.Brain):
             p_seq, tokens_eos, length=tokens_eos_lens
         )
         loss_ctc = self.hparams.ctc_cost(p_ctc, tokens, wav_lens, tokens_lens)
-        loss_l1 = self.hparams.l1_cost(reconstructed_feats, feats)
-        loss_l2 = self.hparams.l2_cost(reconstructed_feats, feats)
+        loss_l1 = self.hparams.l1_cost(reconstructed_feats, feats, wav_lens)
+        loss_l2 = self.hparams.l2_cost(reconstructed_feats, feats, wav_lens)
 
-        reconstructed_loss = (loss_l1 + loss_l2) / 2
+        reconstruction_loss = self.hparams.l1_weight * loss_l1 + loss_l2
         asr_loss = (
             self.hparams.ctc_weight * loss_ctc
             + (1 - self.hparams.ctc_weight) * loss_seq
         )
         loss = (
-            self.hparams.reconstructed_weight * reconstructed_loss
-            + (1 - self.hparams.reconstructed_weight) * asr_loss
+            self.hparams.reconstruction_weight * reconstruction_loss + asr_loss
         )
 
         if stage != sb.Stage.TRAIN:
@@ -153,6 +192,36 @@ class ASR(sb.core.Brain):
 
             # compute the accuracy of the one-step-forward prediction
             self.acc_metric.append(p_seq, tokens_eos, tokens_eos_lens)
+
+        # Add FBank images to tensorboard
+        # TODO(jamfly): kinda messy, need to come up with a smarter/clean way
+        if stage == sb.Stage.VALID or stage == sb.Stage.TRAIN:
+            fbank_ids = (
+                self.valid_fbank_ids
+                if stage == sb.Stage.VALID
+                else self.train_fbank_ids
+            )
+            feats = feats.cpu().detach()
+            reconstructed_feats = reconstructed_feats.cpu().detach()
+            fbanks = zip(ids, feats, reconstructed_feats)
+
+            # Random pick num_figs samples from batch
+            if len(fbank_ids) == 0:
+                num_left_fbanks = self.hparams.num_figs // 2
+                num_right_fbanks = self.hparams.num_figs - num_left_fbanks
+                left_fbank_ids = ids[:num_left_fbanks]
+                right_fbank_ids = ids[-num_right_fbanks:]
+                fbank_ids += left_fbank_ids
+                fbank_ids += right_fbank_ids
+
+            for fbank in fbanks:
+                # When already found our target ids, skip finding
+                if len(self.fbanks) == self.hparams.num_figs:
+                    break
+
+                if fbank[0] in fbank_ids:
+                    self.fbanks.append(fbank)
+
         return loss_l1, loss_l2, loss_ctc, loss_seq, loss
 
     def fit_batch(self, batch):
@@ -244,11 +313,14 @@ class ASR(sb.core.Brain):
                 dynamic_ncols=True,
                 disable=not enable,
             ) as t:
+                global_steps = (epoch - 1) * len(t)
                 for batch in t:
                     if self._optimizer_step_limit_exceeded:
                         logger.info("Train iteration limit exceeded")
                         break
                     self.step += 1
+                    global_steps += 1
+
                     loss_l1, loss_l2, loss_ctc, loss_seq, loss = self.fit_batch(
                         batch
                     )
@@ -274,6 +346,23 @@ class ASR(sb.core.Brain):
                         ctc_loss=self.avg_train_loss_ctc,
                         seq_loss=self.avg_train_loss_seq,
                         train_loss=self.avg_train_loss,
+                    )
+
+                    # Add losses to tensorboard
+                    self.summary_writer.add_scalar(
+                        "Train/loss", loss, global_steps
+                    )
+                    self.summary_writer.add_scalar(
+                        "Train/l1", loss_l1, global_steps
+                    )
+                    self.summary_writer.add_scalar(
+                        "Train/l2", loss_l2, global_steps
+                    )
+                    self.summary_writer.add_scalar(
+                        "Train/ctc_loss", loss_ctc, global_steps,
+                    )
+                    self.summary_writer.add_scalar(
+                        "Train/attention_loss", loss_seq, global_steps,
                     )
 
                     # Debug mode only runs a few batches
@@ -317,15 +406,39 @@ class ASR(sb.core.Brain):
             if valid_set is not None:
                 self.on_stage_start(sb.Stage.VALID, epoch)
                 self.modules.eval()
+
                 avg_valid_loss = 0.0
+                avg_valid_loss_seq = 0.0
+                avg_valid_loss_ctc = 0.0
+                avg_valid_loss_l2 = 0.0
+                avg_valid_loss_l1 = 0.0
+
                 with torch.no_grad():
                     for batch in tqdm(
                         valid_set, dynamic_ncols=True, disable=not enable
                     ):
                         self.step += 1
-                        loss = self.evaluate_batch(batch, stage=sb.Stage.VALID)
+                        (
+                            loss_l1,
+                            loss_l2,
+                            loss_ctc,
+                            loss_seq,
+                            loss,
+                        ) = self.evaluate_batch(batch, stage=sb.Stage.VALID)
                         avg_valid_loss = self.update_average(
                             loss, avg_valid_loss
+                        )
+                        avg_valid_loss_seq = self.update_average(
+                            loss_seq, avg_valid_loss_seq
+                        )
+                        avg_valid_loss_ctc = self.update_average(
+                            loss_ctc, avg_valid_loss_ctc
+                        )
+                        avg_valid_loss_l2 = self.update_average(
+                            loss_l2, avg_valid_loss_l2
+                        )
+                        avg_valid_loss_l1 = self.update_average(
+                            loss_l1, avg_valid_loss_l1
                         )
 
                         # Debug mode only runs a few batches
@@ -336,7 +449,15 @@ class ASR(sb.core.Brain):
                     self.step = 0
                     run_on_main(
                         self.on_stage_end,
-                        args=[sb.Stage.VALID, avg_valid_loss, epoch],
+                        args=[
+                            sb.Stage.VALID,
+                            avg_valid_loss,
+                            avg_valid_loss_seq,
+                            avg_valid_loss_ctc,
+                            avg_valid_loss_l2,
+                            avg_valid_loss_l1,
+                            epoch,
+                        ],
                     )
 
             # Debug mode only runs a few epochs
@@ -351,11 +472,103 @@ class ASR(sb.core.Brain):
         """Computations needed for validation/test batches"""
         with torch.no_grad():
             predictions = self.compute_forward(batch, stage=stage)
-            loss = self.compute_objectives(predictions, batch, stage=stage)
-        return loss.detach()
+            (
+                loss_l1,
+                loss_l2,
+                loss_ctc,
+                loss_seq,
+                loss,
+            ) = self.compute_objectives(predictions, batch, stage)
+
+        return (
+            loss_l1.detach(),
+            loss_l2.detach(),
+            loss_ctc.detach(),
+            loss_seq.detach(),
+            loss.detach(),
+        )
+
+    def evaluate(
+        self,
+        test_set,
+        max_key=None,
+        min_key=None,
+        progressbar=None,
+        test_loader_kwargs={},
+    ):
+        if progressbar is None:
+            progressbar = not self.noprogressbar
+
+        if not (
+            isinstance(test_set, DataLoader)
+            or isinstance(test_set, LoopedLoader)
+        ):
+            test_loader_kwargs["ckpt_prefix"] = None
+            test_set = self.make_dataloader(
+                test_set, sb.Stage.TEST, **test_loader_kwargs
+            )
+        self.on_evaluate_start(max_key=max_key, min_key=min_key)
+        self.on_stage_start(sb.Stage.TEST, epoch=None)
+        self.modules.eval()
+
+        avg_test_loss = 0.0
+        avg_test_loss_seq = 0.0
+        avg_test_loss_ctc = 0.0
+        avg_test_loss_l2 = 0.0
+        avg_test_loss_l1 = 0.0
+
+        with torch.no_grad():
+            for batch in tqdm(
+                test_set, dynamic_ncols=True, disable=not progressbar
+            ):
+                self.step += 1
+                (
+                    loss_l1,
+                    loss_l2,
+                    loss_ctc,
+                    loss_seq,
+                    loss,
+                ) = self.evaluate_batch(batch, stage=sb.Stage.TEST)
+
+                avg_test_loss = self.update_average(loss, avg_test_loss)
+                avg_test_loss_seq = self.update_average(
+                    loss_seq, avg_test_loss_seq
+                )
+                avg_test_loss_ctc = self.update_average(
+                    loss_ctc, avg_test_loss_ctc
+                )
+                avg_test_loss_l2 = self.update_average(
+                    loss_l2, avg_test_loss_l2
+                )
+                avg_test_loss_l1 = self.update_average(
+                    loss_l1, avg_test_loss_l1
+                )
+
+                # Debug mode only runs a few batches
+                if self.debug and self.step == self.debug_batches:
+                    break
+
+            # Only run evaluation "on_stage_end" on main process
+            run_on_main(
+                self.on_stage_end,
+                args=[
+                    sb.Stage.TEST,
+                    avg_test_loss,
+                    avg_test_loss_seq,
+                    avg_test_loss_ctc,
+                    avg_test_loss_l2,
+                    avg_test_loss_l1,
+                    None,
+                ],
+            )
+        self.step = 0
+        return avg_test_loss
 
     def on_stage_start(self, stage, epoch):
         """Gets called at the beginning of each epoch"""
+        if stage == sb.Stage.TRAIN or stage == sb.Stage.VALID:
+            self.fbanks = []
+
         if stage != sb.Stage.TRAIN:
             self.acc_metric = self.hparams.acc_computer()
             self.cer_metric = self.hparams.cer_computer()
@@ -375,15 +588,79 @@ class ASR(sb.core.Brain):
 
         if stage == sb.Stage.TRAIN:
             self.train_stats = stage_stats
+
+            for uid, fbank, re_fbank in self.fbanks:
+                fbank_fig_path = (
+                    f"""{self.hparams.output_folder}/tensorboard"""
+                    f"""/fbank/train/{uid}"""
+                )
+                re_fbank_fig_path = (
+                    f"{self.hparams.output_folder}/tensorboard"
+                    ""
+                    f"""/re_fbank/train/{uid}"""
+                )
+                self._plot_mel_fbank(
+                    uid, fbank, fbank_fig_path, f"Train/FBank/{uid}", epoch,
+                )
+                self._plot_mel_fbank(
+                    uid,
+                    re_fbank,
+                    re_fbank_fig_path,
+                    f"Train/ReFBank/{uid}",
+                    epoch,
+                )
+            self.summary_writer.close()
         else:
             stage_stats["ACC"] = self.acc_metric.summarize()
             current_epoch = self.hparams.epoch_counter.current
             valid_search_interval = self.hparams.valid_search_interval
+
+            # Add losses / FBanks to tensorboard
+            if sb.Stage.VALID:
+                self.summary_writer.add_scalar("Valid/loss", stage_loss, epoch)
+                self.summary_writer.add_scalar("Valid/l1", loss_l1, epoch)
+                self.summary_writer.add_scalar("Valid/l2", loss_l2, epoch)
+                self.summary_writer.add_scalar(
+                    "Valid/ctc_loss", loss_ctc, epoch
+                )
+                self.summary_writer.add_scalar(
+                    "Valid/attention_loss", loss_seq, epoch,
+                )
+                self.summary_writer.add_scalar(
+                    "Valid/accuracy", stage_stats["ACC"], epoch
+                )
+                for uid, fbank, re_fbank in self.fbanks:
+                    fbank_fig_path = (
+                        f"""{self.hparams.output_folder}/tensorboard"""
+                        f"""/fbank/valid/{uid}"""
+                    )
+                    re_fbank_fig_path = (
+                        f"{self.hparams.output_folder}/tensorboard"
+                        ""
+                        f"""/re_fbank/valid/{uid}"""
+                    )
+                    self._plot_mel_fbank(
+                        uid, fbank, fbank_fig_path, f"Valid/FBank/{uid}", epoch,
+                    )
+                    self._plot_mel_fbank(
+                        uid,
+                        re_fbank,
+                        re_fbank_fig_path,
+                        f"Valid/ReFBank/{uid}",
+                        epoch,
+                    )
+                self.summary_writer.close()
             if (
                 current_epoch % valid_search_interval == 0
                 or stage == sb.Stage.TEST
             ):
                 stage_stats["CER"] = self.cer_metric.summarize("error_rate")
+
+                if stage == sb.Stage.VALID:
+                    self.summary_writer.add_scalar(
+                        "Valid/CER", stage_stats["CER"], epoch
+                    )
+                    self.summary_writer.close()
 
         # log stats and save checkpoint at end-of-epoch
         if stage == sb.Stage.VALID and sb.utils.distributed.if_main_process():
@@ -489,11 +766,20 @@ class ASR(sb.core.Brain):
         self.hparams.model.load_state_dict(ckpt, strict=True)
         self.hparams.model.eval()
 
-    @property
-    def _optimizer_step_limit_exceeded(self):
-        return (
-            self.optimizer_step_limit is not None
-            and self.optimizer_step >= self.optimizer_step_limit
+    def _plot_mel_fbank(self, uid, fbank, path, tag, epoch):
+        fig, axs = plt.subplots(1, 1)
+        axs.set_title(uid)
+        axs.imshow(fbank, aspect="auto")
+        axs.set_ylabel("frequency bin")
+        axs.set_xlabel("mel bin")
+
+        if not os.path.isdir(path):
+            os.makedirs(path, exist_ok=True)
+
+        fbank_fig_name = f"{path}/{epoch}.png"
+        fig.savefig(fbank_fig_name)
+        self.summary_writer.add_figure(
+            tag, fig, epoch,
         )
 
 
@@ -521,6 +807,11 @@ def dataio_prepare(hparams):
 
     elif hparams["sorting"] == "random":
         pass
+        #  train_data = train_data.filtered_sorted(
+        #  sort_key="duration",
+        #  key_min_value={"duration": 2},
+        #  key_max_value={"duration": 3},
+        #  )
 
     else:
         raise NotImplementedError(
