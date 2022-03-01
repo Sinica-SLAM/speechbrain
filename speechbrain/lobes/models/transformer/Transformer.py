@@ -100,6 +100,7 @@ class TransformerInterface(nn.Module):
         query_vocab_size: Optional[int] = None,
         key_vocab_size: Optional[int] = None,
         is_mask_diagonal: bool = False,
+        global_pooling: Optional[str] = None,
     ):
         super().__init__()
         self.causal = causal
@@ -145,6 +146,7 @@ class TransformerInterface(nn.Module):
                     query_vocab_size=query_vocab_size,
                     key_vocab_size=key_vocab_size,
                     is_mask_diagonal=is_mask_diagonal,
+                    global_pooling=global_pooling,
                 )
             elif encoder_module == "conformer":
                 self.encoder = ConformerEncoder(
@@ -299,6 +301,7 @@ class TransformerEncoderLayer(nn.Module):
         query_vocab_size=None,
         key_vocab_size=None,
         is_mask_diagonal=False,
+        global_pooling=None,
     ):
         super().__init__()
 
@@ -327,6 +330,7 @@ class TransformerEncoderLayer(nn.Module):
                 query_vocab_size=query_vocab_size,
                 key_vocab_size=key_vocab_size,
                 is_mask_diagonal=is_mask_diagonal,
+                global_pooling=global_pooling,
             )
 
         self.pos_ffn = sb.nnet.attention.PositionalwiseFeedForward(
@@ -463,6 +467,7 @@ class TransformerEncoder(nn.Module):
         query_vocab_size=None,
         key_vocab_size=None,
         is_mask_diagonal=False,
+        global_pooling=None,
     ):
         super().__init__()
 
@@ -483,6 +488,7 @@ class TransformerEncoder(nn.Module):
                     query_vocab_size=query_vocab_size,
                     key_vocab_size=key_vocab_size,
                     is_mask_diagonal=is_mask_diagonal,
+                    global_pooling=global_pooling,
                 )
                 for i in range(num_layers)
             ]

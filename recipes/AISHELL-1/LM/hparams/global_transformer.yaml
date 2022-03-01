@@ -9,7 +9,7 @@
 # Seed needs to be set at top of yaml, before objects with parameters are made
 seed: 2223
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/Transformer_global_w_0.1/<seed>
+output_folder: !ref results/Transformer_global_w_0.1_epoch_20_h_4_layer_12_lr_10_max/<seed>
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
@@ -63,16 +63,17 @@ model: !new:speechbrain.lobes.models.transformer.TransformerLM.GlobalTransformer
     vocab: !ref <output_neurons>
     d_model: !ref <d_model>
     nhead: 4
-    num_encoder_layers: 16
+    num_encoder_layers: 12
     num_decoder_layers: 0
     d_ffn: 2048
-    dropout: 0.1
+    dropout: 0
     activation: !name:torch.nn.GELU
     normalize_before: False
     query_vocab_size: !ref <output_neurons>
     key_vocab_size: !ref <output_neurons>
     global_weight: 0.1
     is_mask_diagonal: True
+    global_pooling: none
 
 modules:
     model: !ref <model>

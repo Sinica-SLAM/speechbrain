@@ -84,6 +84,8 @@ class LM(sb.core.Brain):
                 meta=stage_stats, min_keys=["loss"],
             )
 
+        self.hparams.model.clean_up()
+
 
 def dataio_prepare(hparams):
     """This function prepares the datasets to be used in the brain class.

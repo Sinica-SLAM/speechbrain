@@ -71,6 +71,7 @@ class TransformerLM(TransformerInterface):
         query_vocab_size=None,
         key_vocab_size=None,
         is_mask_diagonal=False,
+        global_pooling=None,
     ):
         super().__init__(
             d_model=d_model,
@@ -89,6 +90,7 @@ class TransformerLM(TransformerInterface):
             query_vocab_size=query_vocab_size,
             key_vocab_size=key_vocab_size,
             is_mask_diagonal=is_mask_diagonal,
+            global_pooling=global_pooling,
         )
 
         self.d_embedding = d_embedding
@@ -186,6 +188,7 @@ class GlobalTransformerLM(TransformerLM):
         query_vocab_size=1000,
         key_vocab_size=1000,
         is_mask_diagonal=False,
+        global_pooling=None,
     ):
         super().__init__(
             vocab,
@@ -206,12 +209,18 @@ class GlobalTransformerLM(TransformerLM):
             query_vocab_size,
             key_vocab_size,
             is_mask_diagonal,
+            global_pooling,
         )
 
     def update_global_scores(self):
         if self.num_encoder_layers > 0:
             for layer in self.encoder.layers:
                 layer.self_att.update_global_scores()
+
+    def clean_up(self):
+        if self.num_encoder_layers > 0:
+            for layer in self.encoder.layers:
+                layer.self_att.clean_up()
 
     def forward(self, src, hx=None):
         """

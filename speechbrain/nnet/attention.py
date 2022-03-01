@@ -9,6 +9,7 @@ Authors
 
 import torch
 import logging
+from torch._C import device
 import torch.nn as nn
 import numpy as np
 from typing import Optional
@@ -852,6 +853,7 @@ class GlobalWiseMultiheadAttention(nn.Module):
         kdim=None,
         vdim=None,
         is_mask_diagonal=False,
+        global_pooling=None,
     ):
         super().__init__()
         """Construct an MultiHeadedAttention object."""
@@ -863,6 +865,7 @@ class GlobalWiseMultiheadAttention(nn.Module):
 
         self.d_k = d_model // nhead
         self.h = nhead
+        self.global_pooling = global_pooling
         self.linear_q = nn.Linear(d_model, d_model, bias=bias)
         self.linear_k = nn.Linear(d_model, kdim, bias=add_bias_kv)
         self.linear_v = nn.Linear(d_model, vdim, bias=add_bias_kv)
@@ -879,15 +882,29 @@ class GlobalWiseMultiheadAttention(nn.Module):
         else:
             self.attn_fill_value = -float("inf")
 
-        self.global_scores = torch.zeros(
-            nhead, query_vocab_size, key_vocab_size, requires_grad=False,
-        ).cuda()
-        self.current_global_scores = torch.zeros(
-            nhead, query_vocab_size, key_vocab_size, requires_grad=False,
-        ).cuda()
+        if self.global_pooling is None:
+            global_scores = torch.zeros(
+                nhead, query_vocab_size, key_vocab_size,
+            )
+            current_global_scores = torch.zeros(
+                nhead, query_vocab_size, key_vocab_size,
+            )
+        else:
+            global_scores = torch.zeros(
+                query_vocab_size, key_vocab_size,
+            )
+            current_global_scores = torch.zeros(
+                query_vocab_size, key_vocab_size,
+            )
+
+        self.register_buffer("global_scores", global_scores)
+        self.register_buffer("current_global_scores", current_global_scores)
+
 
     def update_global_scores(self):
-        self.global_scores += self.current_global_scores
+        self.global_scores.add_(self.current_global_scores)
+
+    def clean_up(self):
         self.current_global_scores.zero_()
 
     def forward_qkv(self, query, key, value):
@@ -926,10 +943,10 @@ class GlobalWiseMultiheadAttention(nn.Module):
 
         # Calculate the global-wise attention
         global_attn = self.calculate_global_attention(
-            self.attn.detach().clone(), query_id, key_id,
+            self.attn, query_id, key_id,
         )
 
-        self.attn = self.attn + self.global_weight * global_attn
+        self.attn = self.attn + (self.global_weight * global_attn)
         self.attn = torch.nn.functional.normalize(self.attn, p=1, dim=-1)
 
         p_attn = self.dropout(self.attn)
@@ -947,9 +964,14 @@ class GlobalWiseMultiheadAttention(nn.Module):
     ) -> torch.Tensor:
         batch_size, q_len = query_id.shape
         _, k_len = key_id.shape
-
+        
+        device = scores.device
         # q_len different possible combinations
-        q_k_id = torch.empty(batch_size, q_len * k_len, 2, dtype=torch.long)
+        # 2 means q and k's location
+        q_k_id = torch.empty(
+            batch_size, q_len * k_len, 2,
+            dtype=torch.long, device=device,
+        )
 
         for b in range(batch_size):
             q_k_id[b] = torch.cartesian_prod(query_id[b], key_id[b])
@@ -957,38 +979,75 @@ class GlobalWiseMultiheadAttention(nn.Module):
         q_k_id = q_k_id.unsqueeze(1).repeat((1, self.h, 1, 1))
 
         # For index, each batch needs n_head
-        b_head = (
-            torch.arange(self.h).unsqueeze(1).expand((self.h, q_len * k_len))
-        )
+        b_head = torch.arange(self.h, device=device)
+        b_head = b_head.unsqueeze(1).expand((self.h, q_len * k_len))
         b_head = b_head.unsqueeze(0).repeat((batch_size, 1, 1))
         b_head = b_head.view((batch_size, self.h, q_len * k_len))
 
         index = (b_head, q_k_id[:, :, :, 0], q_k_id[:, :, :, 1])
 
         # Mask out "self" for each head
+        masked_scores = scores.detach().clone()
         if self.is_mask_diagonal:
             mask = torch.eye(n=q_len, m=k_len, dtype=torch.bool)
             mask = torch.unsqueeze(mask, 0)
             mask = mask.repeat((batch_size * self.h, 1, 1))
             mask = mask.view(batch_size, -1, q_len, k_len)
-            scores[mask] = 0
+            masked_scores[mask] = 0
+            del mask
 
         # Add current scores to current global scores
         # And return global scores based on the given q/k
-        self.current_global_scores = torch.index_put(
-            self.current_global_scores,
-            index,
-            scores.view(batch_size, self.h, -1),
-        )
+        if self.global_pooling is None:
+            self.current_global_scores.index_put_(
+                index,
+                masked_scores.view(batch_size, self.h, -1),
+            )
+        else:
+            sum_heads = torch.zeros(
+                self.h, self.query_vocab_size, self.key_vocab_size,
+                device=device,
+            )
+            self.current_global_scores = torch.index_put(
+                sum_heads,
+                index,
+                masked_scores.view(batch_size, self.h, -1),
+                accumulate=True,
+            )
+            
+            if self.global_pooling == "mean":
+                self.current_global_scores = self.current_global_scores.mean(dim=0)
+            elif self.global_pooling == "sum":
+                self.current_global_scores = self.current_global_scores.sum(dim=0)
+            elif self.global_pooling == "max":
+                self.current_global_scores = self.current_global_scores.max(dim=0)[0]
+            elif self.global_pooling == "min":
+                self.current_global_scores = self.current_global_scores.min(dim=0)[0]
+            elif self.global_pooling == "prod":
+                self.current_global_scores = self.current_global_scores.prod(dim=0)
+
+            del sum_heads
 
         # Get global scores
-        index = torch.stack(
-            (b_head, q_k_id[:, :, :, 0], q_k_id[:, :, :, 1]), dim=-1
-        )
-        index = index.view((-1, 3))
-        index = (index[:, 0], index[:, 1], index[:, 2])
+        if self.global_pooling is None:
+            index = torch.stack(
+                (b_head, q_k_id[:, :, :, 0], q_k_id[:, :, :, 1]), dim=-1
+            )
+            index = index.view((-1, 3))
+            index = (index[:, 0], index[:, 1], index[:, 2])
 
-        return self.global_scores[index].view(scores.size())
+            return self.global_scores[index].view(scores.size())
+        else:
+            # use first head's location instead
+            # cuz we have identical locations for each head
+            index = (q_k_id[:, 0, :, 0], q_k_id[:, 0, :, 1])
+            
+            return self.global_scores[index].view(
+                batch_size,
+                q_len,
+                k_len,
+            ).unsqueeze(1)
+
 
     def forward(
         self,
@@ -1048,3 +1107,4 @@ class GlobalWiseMultiheadAttention(nn.Module):
             return out, scores
         else:
             return out
+
