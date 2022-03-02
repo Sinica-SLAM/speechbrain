@@ -9,7 +9,7 @@
 # Seed needs to be set at top of yaml, before objects with parameters are made
 seed: 2223
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/Transformer_global_w_0.1_epoch_30_h_4_layer_12_lr_10_cnn/<seed>
+output_folder: !ref results/Transformer_global_w_0.1_epoch_30_h_4_layer_12_lr_10_none/<seed>
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
@@ -26,7 +26,7 @@ test_data: !ref <output_folder>/test.csv
 tokenizer_file: ../Tokenizer/results/transformer_tokenizer_bpe5000/5000_unigram.model
 
 # Training parameters
-number_of_epochs: 20
+number_of_epochs: 30
 batch_size: 128
 lr: 10
 accu_steps: 1 # Gradient accumulation to simulate large batch training
@@ -73,7 +73,7 @@ model: !new:speechbrain.lobes.models.transformer.TransformerLM.GlobalTransformer
     key_vocab_size: !ref <output_neurons>
     global_weight: 0.1
     is_mask_diagonal: True
-    global_pooling: cnn
+    # global_pooling: sum
 
 modules:
     model: !ref <model>
@@ -95,7 +95,7 @@ optimizer: !name:torch.optim.Adam
 
 lr_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
     lr_initial: !ref <lr>
-    n_warmup_steps: 25000
+    n_warmup_steps: 250000
     model_size: !ref <d_model>
 
 epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
