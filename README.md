@@ -6,13 +6,11 @@
 
 SpeechBrain is an **open-source** and **all-in-one** conversational AI toolkit based on PyTorch.
 
-The goal is to create a **single**, **flexible**, and **user-friendly** toolkit that can be used to easily develop **state-of-the-art speech technologies**, including systems for **speech recognition**, **speaker recognition**, **speech enhancement**, **speech separation**, **languade identification*, *multi-microphone signal processing** and many others.
+The goal is to create a **single**, **flexible**, and **user-friendly** toolkit that can be used to easily develop **state-of-the-art speech technologies**, including systems for **speech recognition**, **speaker recognition**, **speech enhancement**, **speech separation**, **language identification**, **multi-microphone signal processing**, and many others.
 
 *SpeechBrain is currently in beta*.
 
 **News:** the call for new sponsors (2022) is open. [Take a look here if you are interested!](https://drive.google.com/file/d/1Njn_T2qLJCLPmF2LJ_X7yxxobqK3-CPW/view?usp=sharing)
-
-**News: we are looking for a full-time research engineer.** [Take a look here if you are interested!](https://drive.google.com/file/d/1m9aIvSg3KTrOVVY9fvJ_DGdIsskzkqXf/view)
 
 
 | **[Discourse](https://speechbrain.discourse.group)** | **[Tutorials](https://speechbrain.github.io/tutorial_basics.html)** | **[Website](https://speechbrain.github.io/)** | **[Documentation](https://speechbrain.readthedocs.io/en/latest/index.html)** | **[Contributing](https://speechbrain.readthedocs.io/en/latest/contributing.html)** | **[HuggingFace](https://huggingface.co/speechbrain)** |
@@ -29,7 +27,7 @@ SpeechBrain provides various useful tools to speed up and facilitate research on
 - On-the-fly dynamic batching
 - Efficient reading of large datasets from a shared  Network File System (NFS) via [WebDataset](https://github.com/webdataset/webdataset).
 - Interface with [HuggingFace](https://huggingface.co/speechbrain) for popular models such as wav2vec2  and Hubert.
-- Interface with [Orion(https://github.com/Epistimio/orion) for hyperparameter tuning.
+- Interface with [Orion](https://github.com/Epistimio/orion) for hyperparameter tuning.
 
 
 ### Speech recognition
@@ -72,6 +70,9 @@ In particular, our best model is based on an ECAPA-TDNN trained with the [voxlin
 - Recipes for spectral masking, spectral mapping, and time-domain speech enhancement.
 - Multiple sophisticated enhancement losses, including differentiable STOI loss, MetricGAN, and mimic loss.
 - State-of-the-art performance on speech separation with Conv-TasNet, DualPath RNN, and SepFormer.
+
+### Self-Supervised Learning of Speech Representations
+- Recipes for wav2vec 2.0 pre-training with multiple GPUs compatible with HuggingFace models.
 
 ### Multi-microphone processing
 Combining multiple microphones is a powerful approach to achieve robustness in adverse acoustic environments:
