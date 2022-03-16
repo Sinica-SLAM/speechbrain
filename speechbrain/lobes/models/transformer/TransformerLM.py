@@ -60,7 +60,7 @@ class TransformerLM(TransformerInterface):
         num_decoder_layers=0,
         d_ffn=2048,
         dropout=0.1,
-        global_weight=0.1,
+        global_momentum=0.5,
         activation=nn.ReLU,
         positional_encoding="fixed_abs_sine",
         normalize_before=False,
@@ -80,7 +80,7 @@ class TransformerLM(TransformerInterface):
             num_decoder_layers=num_decoder_layers,
             d_ffn=d_ffn,
             dropout=dropout,
-            global_weight=global_weight,
+            global_momentum=global_momentum,
             activation=activation,
             positional_encoding=positional_encoding,
             normalize_before=normalize_before,
@@ -178,7 +178,7 @@ class GlobalTransformerLM(TransformerLM):
         num_decoder_layers=0,
         d_ffn=2048,
         dropout=0.1,
-        global_weight=0.1,
+        global_momentum=0.5,
         activation=nn.ReLU,
         positional_encoding="fixed_abs_sine",
         normalize_before=False,
@@ -198,7 +198,7 @@ class GlobalTransformerLM(TransformerLM):
             num_decoder_layers,
             d_ffn,
             dropout,
-            global_weight,
+            global_momentum,
             activation,
             positional_encoding,
             normalize_before,
@@ -222,7 +222,7 @@ class GlobalTransformerLM(TransformerLM):
             for layer in self.encoder.layers:
                 layer.self_att.clean_up()
 
-    def forward(self, src, hx=None):
+    def forward(self, src, hx=None, global_weight=None):
         """
         Arguments
         ---------
@@ -242,6 +242,7 @@ class GlobalTransformerLM(TransformerLM):
                 src_mask=src_mask,
                 src_key_padding_mask=src_key_padding_mask,
                 src_id=src_id,
+                global_weight=global_weight,
             )
 
         if self.num_decoder_layers > 0:
@@ -250,6 +251,7 @@ class GlobalTransformerLM(TransformerLM):
                 tgt=src,
                 tgt_mask=src_mask,
                 tgt_key_padding_mask=src_key_padding_mask,
+                global_weight=global_weight,
             )
 
         pred = self.output_proj(encoder_out)

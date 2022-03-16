@@ -16,7 +16,23 @@ class LM(sb.core.Brain):
     def compute_forward(self, batch, stage):
         batch = batch.to(self.device)
         tokens_bos, _ = batch.tokens_bos
-        logits = self.hparams.model(tokens_bos)
+
+        current_epoch = self.hparams.epoch_counter.current
+
+        if current_epoch < self.hparams.first_stage:
+            global_weight = 0
+        else:
+            schedule_epoch = current_epoch - self.hparams.first_stage
+            global_weight = self.hparams.global_weight_scheduler(
+                schedule_epoch
+            )[0]
+
+        #  if current_epoch > self.hparams.first_stage:
+        #  current_epoch = self.hparams.first_stage
+
+        #  global_weight = self.hparams.global_weight_scheduler(current_epoch)[0]
+
+        logits = self.hparams.model(tokens_bos, global_weight=global_weight)
         pred = self.hparams.log_softmax(logits)
         return pred
 
@@ -216,3 +232,8 @@ if __name__ == "__main__":
         min_key="loss",
         test_loader_kwargs=hparams["test_dataloader_opts"],
     )
+
+    import math
+
+    ppl = math.exp(test_stats)
+    logger.info(ppl)

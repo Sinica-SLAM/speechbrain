@@ -213,3 +213,8 @@ if __name__ == "__main__":
         min_key="loss",
         test_loader_kwargs=hparams["test_dataloader_opts"],
     )
+
+    import math
+
+    ppl = math.exp(test_stats)
+    logger.info(ppl)

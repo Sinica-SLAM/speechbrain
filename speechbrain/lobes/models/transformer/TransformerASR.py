@@ -15,6 +15,7 @@ from speechbrain.lobes.models.transformer.Transformer import (
     get_lookahead_mask,
     get_key_padding_mask,
     NormalizedEmbedding,
+    TransformerDecoder,
 )
 from speechbrain.nnet.activations import Swish
 
@@ -94,6 +95,7 @@ class TransformerASR(TransformerInterface):
         num_decoder_layers=6,
         d_ffn=2048,
         dropout=0.1,
+        global_momentum=0.5,
         activation=nn.ReLU,
         positional_encoding="fixed_abs_sine",
         normalize_before=False,
@@ -104,6 +106,10 @@ class TransformerASR(TransformerInterface):
         attention_type: Optional[str] = "regularMHA",
         max_length: Optional[int] = 2500,
         causal: Optional[bool] = True,
+        query_vocab_size: Optional[int] = None,
+        key_vocab_size: Optional[int] = None,
+        is_mask_diagonal: bool = False,
+        global_pooling: Optional[str] = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -112,6 +118,7 @@ class TransformerASR(TransformerInterface):
             num_decoder_layers=num_decoder_layers,
             d_ffn=d_ffn,
             dropout=dropout,
+            global_momentum=global_momentum,
             activation=activation,
             positional_encoding=positional_encoding,
             normalize_before=normalize_before,
@@ -122,6 +129,10 @@ class TransformerASR(TransformerInterface):
             attention_type=attention_type,
             max_length=max_length,
             causal=causal,
+            query_vocab_size=query_vocab_size,
+            key_vocab_size=key_vocab_size,
+            is_mask_diagonal=is_mask_diagonal,
+            global_pooling=global_pooling,
         )
 
         self.custom_src_module = ModuleList(
@@ -347,3 +358,175 @@ class EncoderWrapper(nn.Module):
     def forward(self, x, wav_lens=None):
         x = self.transformer.encode(x, wav_lens)
         return x
+
+
+class GlobalTransformerASR(TransformerASR):
+    def __init__(
+        self,
+        tgt_vocab,
+        input_size,
+        d_model=512,
+        nhead=8,
+        num_encoder_layers=6,
+        num_decoder_layers=6,
+        d_ffn=2048,
+        dropout=0.1,
+        global_momentum=0.5,
+        activation=nn.ReLU,
+        positional_encoding="fixed_abs_sine",
+        normalize_before=False,
+        kernel_size: Optional[int] = 31,
+        bias: Optional[bool] = True,
+        encoder_module: Optional[str] = "transformer",
+        conformer_activation: Optional[nn.Module] = Swish,
+        attention_type: Optional[str] = "regularMHA",
+        max_length: Optional[int] = 2500,
+        causal: Optional[bool] = True,
+        query_vocab_size=1000,
+        key_vocab_size=1000,
+        is_mask_diagonal=False,
+        global_pooling=None,
+    ):
+        super().__init__(
+            tgt_vocab,
+            input_size,
+            d_model,
+            nhead,
+            num_encoder_layers,
+            num_decoder_layers,
+            d_ffn,
+            dropout,
+            global_momentum,
+            activation,
+            positional_encoding,
+            normalize_before,
+            kernel_size,
+            bias,
+            encoder_module,
+            conformer_activation,
+            attention_type,
+            max_length,
+            causal,
+            query_vocab_size,
+            key_vocab_size,
+            is_mask_diagonal,
+            global_pooling,
+        )
+
+        self.decoder = TransformerDecoder(
+            num_layers=num_decoder_layers,
+            nhead=nhead,
+            d_ffn=d_ffn,
+            d_model=d_model,
+            dropout=dropout,
+            global_momentum=global_momentum,
+            activation=activation,
+            normalize_before=normalize_before,
+            causal=True,
+            attention_type="GlobalMHA",
+            query_vocab_size=query_vocab_size,
+            key_vocab_size=key_vocab_size,
+            is_mask_diagonal=is_mask_diagonal,
+            global_pooling=global_pooling,
+        )
+
+    def update_global_scores(self):
+        for layer in self.decoder.layers:
+            layer.self_attn.update_global_scores()
+
+    def clean_up(self):
+        for layer in self.decoder.layers:
+            layer.self_attn.clean_up()
+
+    def forward(self, src, tgt, wav_len=None, pad_idx=0, global_weight=0.1):
+        """
+        Arguments
+        ----------
+        src : torch.Tensor
+            The sequence to the encoder.
+        tgt : torch.Tensor
+            The sequence to the decoder.
+        wav_len: torch.Tensor, optional
+            Torch Tensor of shape (batch, ) containing the relative length to padded length for each example.
+        pad_idx : int, optional
+            The index for <pad> token (default=0).
+        """
+
+        # reshpae the src vector to [Batch, Time, Fea] is a 4d vector is given
+        if src.ndim == 4:
+            bz, t, ch1, ch2 = src.shape
+            src = src.reshape(bz, t, ch1 * ch2)
+
+        (
+            src_key_padding_mask,
+            tgt_key_padding_mask,
+            src_mask,
+            tgt_mask,
+        ) = self.make_masks(src, tgt, wav_len, pad_idx=pad_idx)
+
+        src = self.custom_src_module(src)
+        # add pos encoding to queries if are sinusoidal ones else
+        if self.attention_type == "RelPosMHAXL":
+            pos_embs_encoder = self.positional_encoding(src)
+        elif self.positional_encoding_type == "fixed_abs_sine":
+            src = src + self.positional_encoding(src)  # add the encodings here
+            pos_embs_encoder = None
+
+        encoder_out, _ = self.encoder(
+            src=src,
+            src_mask=src_mask,
+            src_key_padding_mask=src_key_padding_mask,
+            pos_embs=pos_embs_encoder,
+        )
+
+        tgt_id = tgt
+        tgt = self.custom_tgt_module(tgt)
+
+        # Global-Wise attention only supports the fix positional encoding
+        tgt = tgt + self.positional_encoding(tgt)
+        pos_embs_target = None
+        pos_embs_encoder = None
+
+        decoder_out, _, _ = self.decoder(
+            tgt=tgt,
+            memory=encoder_out,
+            memory_mask=src_mask,
+            tgt_mask=tgt_mask,
+            tgt_key_padding_mask=tgt_key_padding_mask,
+            memory_key_padding_mask=src_key_padding_mask,
+            pos_embs_tgt=pos_embs_target,
+            pos_embs_src=pos_embs_encoder,
+            tgt_id=tgt_id,
+            global_weight=global_weight,
+        )
+
+        return encoder_out, decoder_out
+
+    def decode(self, tgt, encoder_out, global_weight):
+        """This method implements a decoding step for the transformer model.
+
+        Arguments
+        ---------
+        tgt : torch.Tensor
+            The sequence to the decoder.
+        encoder_out : torch.Tensor
+            Hidden output of the encoder.
+        """
+        tgt_id = tgt
+        tgt_mask = get_lookahead_mask(tgt)
+        tgt = self.custom_tgt_module(tgt)
+
+        tgt = tgt + self.positional_encoding(tgt)  # add the encodings here
+        pos_embs_target = None
+        pos_embs_encoder = None
+
+        prediction, self_attns, multihead_attns = self.decoder(
+            tgt,
+            encoder_out,
+            tgt_mask=tgt_mask,
+            pos_embs_tgt=pos_embs_target,
+            pos_embs_src=pos_embs_encoder,
+            tgt_id=tgt_id,
+            global_weight=global_weight,
+        )
+        return prediction, multihead_attns[-1]

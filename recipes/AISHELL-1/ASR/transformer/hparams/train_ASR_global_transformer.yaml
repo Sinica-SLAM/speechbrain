@@ -10,7 +10,7 @@
 # Seed needs to be set at top of yaml, before objects with parameters are made
 seed: 8886
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/transformer/<seed>
+output_folder: !ref results/global_transformer_none_weight_first_stage_20_1.0_2.0_m_0.9_no_mask/<seed>
 cer_file: !ref <output_folder>/cer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
@@ -28,9 +28,9 @@ tokenizer_file: speechbrain/asr-transformer-aishell/tokenizer.ckpt
 
 # Training parameters
 number_of_epochs: 50
-batch_size: 8
+batch_size: 16
 ctc_weight: 0.3
-gradient_accumulation: 4
+gradient_accumulation: 1
 gradient_clipping: 5.0
 loss_reduction: 'batchmean'
 sorting: random
@@ -49,6 +49,7 @@ n_mels: 80
 train_dataloader_opts:
     batch_size: !ref <batch_size>
     shuffle: True
+    num_workers: 64
 
 valid_dataloader_opts:
     batch_size: !ref <batch_size>
@@ -95,7 +96,7 @@ CNN: !new:speechbrain.lobes.models.convolution.ConvolutionFrontEnd
     strides: (2, 2)
     residuals: (False, False)
 
-Transformer: !new:speechbrain.lobes.models.transformer.TransformerASR.TransformerASR # yamllint disable-line rule:line-length
+Transformer: !new:speechbrain.lobes.models.transformer.TransformerASR.GlobalTransformerASR # yamllint disable-line rule:line-length
     input_size: 5120
     tgt_vocab: !ref <output_neurons>
     d_model: !ref <d_model>
@@ -106,6 +107,18 @@ Transformer: !new:speechbrain.lobes.models.transformer.TransformerASR.Transforme
     dropout: !ref <transformer_dropout>
     activation: !ref <activation>
     normalize_before: True
+    query_vocab_size: !ref <output_neurons>
+    key_vocab_size: !ref <output_neurons>
+    global_momentum: 0.9
+    is_mask_diagonal: False
+    #global_pooling: sum
+
+first_stage: 20
+global_weight_scheduler: !new:speechbrain.nnet.schedulers.LinearScheduler
+    initial_value: 1.0
+    final_value: 2.0
+    epoch_count: !ref <first_stage>
+
 
 tokenizer: !new:sentencepiece.SentencePieceProcessor
 
@@ -147,7 +160,7 @@ SGD: !name:torch.optim.SGD
     nesterov: True
 
 
-valid_search: !new:speechbrain.decoders.S2STransformerBeamSearch
+valid_search: !new:speechbrain.decoders.S2SGlobalTransformerBeamSearch
     modules: [!ref <Transformer>, !ref <seq_lin>, !ref <ctc_lin>]
     bos_index: !ref <bos_index>
     eos_index: !ref <eos_index>
@@ -159,7 +172,7 @@ valid_search: !new:speechbrain.decoders.S2STransformerBeamSearch
     using_eos_threshold: False
     length_normalization: True
 
-test_search: !new:speechbrain.decoders.S2STransformerBeamSearch
+test_search: !new:speechbrain.decoders.S2SGlobalTransformerBeamSearch
     modules: [!ref <Transformer>, !ref <seq_lin>, !ref <ctc_lin>]
     bos_index: !ref <bos_index>
     eos_index: !ref <eos_index>

@@ -845,7 +845,7 @@ class GlobalWiseMultiheadAttention(nn.Module):
         d_model,
         query_vocab_size,
         key_vocab_size,
-        global_weight=0.1,
+        global_momentum=0.5,
         dropout=0.0,
         bias=True,
         add_bias_kv=False,
@@ -862,18 +862,39 @@ class GlobalWiseMultiheadAttention(nn.Module):
         kdim = kdim if kdim else d_model
         vdim = vdim if vdim else d_model
 
+        self._qkv_same_embed_dim = vdim == d_model
         self.d_k = d_model // nhead
         self.h = nhead
-        self.global_pooling = global_pooling
-        self.linear_q = nn.Linear(d_model, d_model, bias=bias)
-        self.linear_k = nn.Linear(d_model, kdim, bias=add_bias_kv)
-        self.linear_v = nn.Linear(d_model, vdim, bias=add_bias_kv)
-        self.linear_out = nn.Linear(d_model, d_model, bias=bias)
-        self.attn = None
+
+        if self._qkv_same_embed_dim is False:
+            self.q_proj_weight = nn.Parameter(torch.empty(d_model, d_model))
+            self.k_proj_weight = nn.Parameter(torch.empty(d_model, kdim))
+            self.v_proj_weight = nn.Parameter(torch.empty(d_model, vdim))
+        else:
+            self.in_proj_weight = nn.Parameter(
+                torch.empty(3 * d_model, d_model)
+            )
+
+        if bias:
+            self.in_proj_bias = nn.Parameter(torch.empty(3 * d_model))
+        else:
+            self.register_parameter("in_proj_bias", None)
+
+        if add_bias_kv:
+            self.bias_k = nn.Parameter(torch.empty(1, 1, d_model))
+            self.bias_v = nn.Parameter(torch.empty(1, 1, d_model))
+        else:
+            self.bias_k = self.bias_v = None
+
+        self.out_proj = nn.Linear(d_model, d_model, bias=bias)
         self.dropout = nn.Dropout(p=dropout)
+        self.attn = None
+
+        # Global attention related stuff
         self.query_vocab_size = query_vocab_size
         self.key_vocab_size = key_vocab_size
-        self.global_weight = global_weight
+        self.global_pooling = global_pooling
+        self.global_momentum = global_momentum
         self.is_mask_diagonal = is_mask_diagonal
 
         if next(self.parameters()).dtype == torch.float16:
@@ -902,8 +923,29 @@ class GlobalWiseMultiheadAttention(nn.Module):
         self.register_buffer("global_scores", global_scores)
         self.register_buffer("current_global_scores", current_global_scores)
 
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        if self._qkv_same_embed_dim:
+            torch.nn.init.xavier_uniform_(self.in_proj_weight)
+        else:
+            torch.nn.init.xavier_uniform_(self.q_proj_weight)
+            torch.nn.init.xavier_uniform_(self.k_proj_weight)
+            torch.nn.init.xavier_uniform_(self.v_proj_weight)
+
+        if self.in_proj_bias is not None:
+            torch.nn.init.constant_(self.in_proj_bias, 0)
+            torch.nn.init.constant_(self.out_proj.bias, 0)
+        if self.bias_k is not None:
+            torch.nn.init.xavier_normal_(self.bias_k)
+        if self.bias_v is not None:
+            torch.nn.init.xavier_normal_(self.bias_v)
+
     def update_global_scores(self):
-        self.global_scores.add_(self.current_global_scores)
+        self.global_scores = (
+            self.global_momentum * self.global_scores
+            + (1 - self.global_momentum) * self.current_global_scores
+        )
 
     def clean_up(self):
         self.current_global_scores.zero_()
@@ -920,16 +962,52 @@ class GlobalWiseMultiheadAttention(nn.Module):
             torch.Tensor: Transformed value tensor (#batch, n_head, time2, d_k).
         """
         batch_size = query.size(0)
-        q = self.linear_q(query).view(batch_size, -1, self.h, self.d_k)
-        k = self.linear_k(key).view(batch_size, -1, self.h, self.d_k)
-        v = self.linear_v(value).view(batch_size, -1, self.h, self.d_k)
-        q = q.transpose(1, 2)  # (batch, head, time1, d_k)
-        k = k.transpose(1, 2)  # (batch, head, time2, d_k)
-        v = v.transpose(1, 2)  # (batch, head, time2, d_k)
 
-        return q, k, v
+        if self._qkv_same_embed_dim:
+            # self-attention
+            if (query is key or torch.equal(query, key)) and (
+                key is value or torch.equal(key, value)
+            ):
+                query, key, value = (
+                    nn.functional.linear(query, self.in_proj_weight)
+                    .view(batch_size, -1, self.h, self.d_k * 3)
+                    .chunk(3, dim=-1)
+                )
+            else:
+                qweight, kweight, vweight = self.in_proj_weight.chunk(3, dim=0)
+                query = nn.functional.linear(query, qweight).view(
+                    batch_size, -1, self.num_heads, self.d_k
+                )
+                key = nn.functional.linear(key, kweight).view(
+                    batch_size, -1, self.num_heads, self.d_k
+                )
+                value = nn.functional.linear(value, vweight).view(
+                    batch_size, -1, self.num_heads, self.d_k
+                )
+        else:
+            raise NotImplementedError
 
-    def forward_attention(self, value, scores, query_id, key_id):
+        # add bias along batch dimension (currently second)
+        if self.bias_k is not None and self.bias_v is not None:
+            key = key + self.bias_k.view(1, 1, self.h, self.d_k)
+            value = value + self.bias_v.view(1, 1, self.h, self.d_k)
+
+        query = query.transpose(2, 1)
+        key = key.transpose(2, 1)
+        value = value.transpose(2, 1)
+
+        return query, key, value
+
+    def forward_attention(
+        self,
+        value,
+        scores,
+        query_id,
+        key_id,
+        key_padding_mask,
+        attn_mask,
+        global_weight,
+    ):
         """Compute attention context vector.
         Args:
             value (torch.Tensor): Transformed value (#batch, n_head, time2, d_k).
@@ -947,7 +1025,21 @@ class GlobalWiseMultiheadAttention(nn.Module):
             self.attn, query_id, key_id,
         )
 
-        self.attn = self.attn + (self.global_weight * global_attn)
+        k_len = key_id.size(1)
+
+        if attn_mask is not None:
+            if attn_mask.dtype == torch.bool:
+                global_attn = global_attn.masked_fill(attn_mask, 0)
+            else:
+                global_attn += attn_mask
+                global_attn[global_attn == self.attn_fill_value] = 0
+
+        if key_padding_mask is not None:
+            global_attn = global_attn.masked_fill(
+                key_padding_mask.view(batch_size, 1, 1, k_len), 0,
+            )
+
+        self.attn = self.attn + (global_weight * global_attn)
         self.attn = torch.nn.functional.normalize(self.attn, p=1, dim=-1)
 
         p_attn = self.dropout(self.attn)
@@ -958,7 +1050,7 @@ class GlobalWiseMultiheadAttention(nn.Module):
             .view(batch_size, -1, self.h * self.d_k)
         )  # (batch, time1, d_model)
 
-        return self.linear_out(x)  # (batch, time1, d_model)
+        return self.out_proj(x)  # (batch, time1, d_model)
 
     def calculate_global_attention(
         self, scores, query_id, key_id
@@ -994,6 +1086,7 @@ class GlobalWiseMultiheadAttention(nn.Module):
             mask = mask.repeat((batch_size * self.h, 1, 1))
             mask = mask.view(batch_size, -1, q_len, k_len)
             masked_scores[mask] = 0
+            masked_scores[:, :, :, 0] = 0  # Mask out <bos>
             del mask
 
         # Add current scores to current global scores
@@ -1033,11 +1126,8 @@ class GlobalWiseMultiheadAttention(nn.Module):
 
         # Get global scores
         if self.global_pooling is None:
-            index = torch.stack(
-                (b_head, q_k_id[:, :, :, 0], q_k_id[:, :, :, 1]), dim=-1
-            )
-            index = index.view((-1, 3))
-            index = (index[:, 0], index[:, 1], index[:, 2])
+            # logger.info(self.global_scores[index].view(scores.size()))
+            # exit()
 
             return self.global_scores[index].view(scores.size())
         else:
@@ -1062,6 +1152,7 @@ class GlobalWiseMultiheadAttention(nn.Module):
         attn_mask=None,
         return_attn_weights=True,
         pos_embs=None,
+        global_weight=0.1,
     ):
         """Compute scaled dot product attention.
         Args:
@@ -1074,6 +1165,7 @@ class GlobalWiseMultiheadAttention(nn.Module):
             torch.Tensor: Output tensor (#batch, time1, d_model).
         """
         q, k, v = self.forward_qkv(query, key, value)
+
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
         # compute attention probability
         batch_size = query.shape[0]
@@ -1103,7 +1195,15 @@ class GlobalWiseMultiheadAttention(nn.Module):
                 self.attn_fill_value,
             )
 
-        out = self.forward_attention(v, scores, query_id, key_id)
+        out = self.forward_attention(
+            v,
+            scores,
+            query_id,
+            key_id,
+            key_padding_mask,
+            attn_mask,
+            global_weight,
+        )
 
         if return_attn_weights:
             return out, scores

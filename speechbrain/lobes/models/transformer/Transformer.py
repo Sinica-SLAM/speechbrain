@@ -84,7 +84,7 @@ class TransformerInterface(nn.Module):
         num_decoder_layers=6,
         d_ffn=2048,
         dropout=0.1,
-        global_weight=0.1,
+        global_momentum=0.5,
         activation=nn.ReLU,
         custom_src_module=None,
         custom_tgt_module=None,
@@ -138,7 +138,7 @@ class TransformerInterface(nn.Module):
                     d_ffn=d_ffn,
                     d_model=d_model,
                     dropout=dropout,
-                    global_weight=global_weight,
+                    global_momentum=global_momentum,
                     activation=activation,
                     normalize_before=normalize_before,
                     causal=self.causal,
@@ -293,7 +293,7 @@ class TransformerEncoderLayer(nn.Module):
         kdim=None,
         vdim=None,
         dropout=0.0,
-        global_weight=0.1,
+        global_momentum=0.5,
         activation=nn.ReLU,
         normalize_before=False,
         attention_type="regularMHA",
@@ -324,7 +324,7 @@ class TransformerEncoderLayer(nn.Module):
                 nhead=nhead,
                 d_model=d_model,
                 dropout=dropout,
-                global_weight=global_weight,
+                global_momentum=global_momentum,
                 kdim=kdim,
                 vdim=vdim,
                 query_vocab_size=query_vocab_size,
@@ -354,6 +354,7 @@ class TransformerEncoderLayer(nn.Module):
         src_key_padding_mask: Optional[torch.Tensor] = None,
         pos_embs: Optional[torch.Tensor] = None,
         src_id: Optional[torch.Tensor] = None,
+        global_weight: Optional[int] = None,
     ):
         """
         Arguments
@@ -380,6 +381,7 @@ class TransformerEncoderLayer(nn.Module):
                 pos_embs=pos_embs,
                 query_id=src_id,
                 key_id=src_id,
+                global_weight=global_weight,
             )
         else:
             output, self_attn = self.self_att(
@@ -459,7 +461,7 @@ class TransformerEncoder(nn.Module):
         kdim=None,
         vdim=None,
         dropout=0.0,
-        global_weight=0.1,
+        global_momentum=0.5,
         activation=nn.ReLU,
         normalize_before=False,
         causal=False,
@@ -480,7 +482,7 @@ class TransformerEncoder(nn.Module):
                     kdim=kdim,
                     vdim=vdim,
                     dropout=dropout,
-                    global_weight=global_weight,
+                    global_momentum=global_momentum,
                     activation=activation,
                     normalize_before=normalize_before,
                     causal=causal,
@@ -502,6 +504,7 @@ class TransformerEncoder(nn.Module):
         src_key_padding_mask: Optional[torch.Tensor] = None,
         pos_embs: Optional[torch.Tensor] = None,
         src_id: Optional[torch.Tensor] = None,
+        global_weight: Optional[int] = None,
     ):
         """
         Arguments
@@ -522,6 +525,7 @@ class TransformerEncoder(nn.Module):
                 src_key_padding_mask=src_key_padding_mask,
                 pos_embs=pos_embs,
                 src_id=src_id,
+                global_weight=global_weight,
             )
             attention_lst.append(attention)
         output = self.norm(output)
@@ -565,13 +569,19 @@ class TransformerDecoderLayer(nn.Module):
         kdim=None,
         vdim=None,
         dropout=0.0,
+        global_momentum=0.5,
         activation=nn.ReLU,
         normalize_before=False,
         attention_type="regularMHA",
         causal=None,
+        query_vocab_size=None,
+        key_vocab_size=None,
+        is_mask_diagonal=False,
+        global_pooling=None,
     ):
         super().__init__()
         self.nhead = nhead
+        self.attention_type = attention_type
 
         if attention_type == "regularMHA":
             self.self_attn = sb.nnet.attention.MultiheadAttention(
@@ -597,13 +607,33 @@ class TransformerDecoderLayer(nn.Module):
                 d_model, nhead, dropout, mask_pos_future=causal
             )
 
+        elif attention_type == "GlobalMHA":
+            self.self_attn = sb.nnet.attention.GlobalWiseMultiheadAttention(
+                nhead=nhead,
+                d_model=d_model,
+                dropout=dropout,
+                global_momentum=global_momentum,
+                kdim=kdim,
+                vdim=vdim,
+                query_vocab_size=query_vocab_size,
+                key_vocab_size=key_vocab_size,
+                is_mask_diagonal=is_mask_diagonal,
+                global_pooling=global_pooling,
+            )
+            self.mutihead_attn = sb.nnet.attention.MultiheadAttention(
+                nhead=nhead,
+                d_model=d_model,
+                kdim=kdim,
+                vdim=vdim,
+                dropout=dropout,
+            )
+
         self.pos_ffn = sb.nnet.attention.PositionalwiseFeedForward(
             d_ffn=d_ffn,
             input_size=d_model,
             dropout=dropout,
             activation=activation,
         )
-
         # normalization layers
         self.norm1 = sb.nnet.normalization.LayerNorm(d_model, eps=1e-6)
         self.norm2 = sb.nnet.normalization.LayerNorm(d_model, eps=1e-6)
@@ -624,6 +654,8 @@ class TransformerDecoderLayer(nn.Module):
         memory_key_padding_mask=None,
         pos_embs_tgt=None,
         pos_embs_src=None,
+        tgt_id=None,
+        global_weight=None,
     ):
         """
         Arguments
@@ -647,14 +679,27 @@ class TransformerDecoderLayer(nn.Module):
             tgt1 = tgt
 
         # self-attention over the target sequence
-        tgt2, self_attn = self.self_attn(
-            query=tgt1,
-            key=tgt1,
-            value=tgt1,
-            attn_mask=tgt_mask,
-            key_padding_mask=tgt_key_padding_mask,
-            pos_embs=pos_embs_tgt,
-        )
+        if self.attention_type == "GlobalMHA":
+            tgt2, self_attn = self.self_attn(
+                tgt1,
+                tgt1,
+                tgt1,
+                attn_mask=tgt_mask,
+                key_padding_mask=tgt_key_padding_mask,
+                pos_embs=pos_embs_tgt,
+                query_id=tgt_id,
+                key_id=tgt_id,
+                global_weight=global_weight,
+            )
+        else:
+            tgt2, self_attn = self.self_attn(
+                query=tgt1,
+                key=tgt1,
+                value=tgt1,
+                attn_mask=tgt_mask,
+                key_padding_mask=tgt_key_padding_mask,
+                pos_embs=pos_embs_tgt,
+            )
 
         # add & norm
         tgt = tgt + self.dropout1(tgt2)
@@ -734,10 +779,15 @@ class TransformerDecoder(nn.Module):
         kdim=None,
         vdim=None,
         dropout=0.0,
+        global_momentum=0.5,
         activation=nn.ReLU,
         normalize_before=False,
         causal=False,
         attention_type="regularMHA",
+        query_vocab_size=None,
+        key_vocab_size=None,
+        is_mask_diagonal=None,
+        global_pooling=None,
     ):
         super().__init__()
         self.layers = torch.nn.ModuleList(
@@ -749,10 +799,15 @@ class TransformerDecoder(nn.Module):
                     kdim=kdim,
                     vdim=vdim,
                     dropout=dropout,
+                    global_momentum=global_momentum,
                     activation=activation,
                     normalize_before=normalize_before,
                     causal=causal,
                     attention_type=attention_type,
+                    query_vocab_size=query_vocab_size,
+                    key_vocab_size=key_vocab_size,
+                    is_mask_diagonal=is_mask_diagonal,
+                    global_pooling=global_pooling,
                 )
                 for _ in range(num_layers)
             ]
@@ -769,6 +824,8 @@ class TransformerDecoder(nn.Module):
         memory_key_padding_mask=None,
         pos_embs_tgt=None,
         pos_embs_src=None,
+        tgt_id=None,
+        global_weight=None,
     ):
         """
         Arguments
@@ -798,6 +855,8 @@ class TransformerDecoder(nn.Module):
                 memory_key_padding_mask=memory_key_padding_mask,
                 pos_embs_tgt=pos_embs_tgt,
                 pos_embs_src=pos_embs_src,
+                tgt_id=tgt_id,
+                global_weight=global_weight,
             )
             self_attns.append(self_attn)
             multihead_attns.append(multihead_attn)
