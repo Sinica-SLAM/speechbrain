@@ -9,14 +9,14 @@
 # Seed needs to be set at top of yaml, before objects with parameters are made
 seed: 2223
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/Transformer/<seed>
+output_folder: !ref results/Transformer_512_h_8/<seed>
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
 # Data files
 # The data_folder is needed because we train the LM on the training
 # transcriptions of LibriSpeech as well.
-data_folder: !PLACEHOLDER # e.g, /localscratch/LibriSpeech
+data_folder: /mnt/md0/user_jamfly/CORPUS/LibriSpeech #!PLACEHOLDER # e.g, /localscratch/LibriSpeech
 
 # path to the lm_corpus
 # if set to null, it will automatically download from the internet
@@ -54,17 +54,17 @@ unk_index: 0
 pad_index: 0
 
 # model params
-d_model: 768
+d_model: 512
 
 
 # Functions
 model: !new:speechbrain.lobes.models.transformer.TransformerLM.TransformerLM # yamllint disable-line rule:line-length
     vocab: !ref <output_neurons>
     d_model: !ref <d_model>
-    nhead: 12
+    nhead: 8
     num_encoder_layers: 12
     num_decoder_layers: 0
-    d_ffn: 3072
+    d_ffn: 2048
     dropout: 0.0
     activation: !name:torch.nn.GELU
     normalize_before: False

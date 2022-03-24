@@ -10,7 +10,7 @@
 # Seed needs to be set at top of yaml, before objects with parameters are made
 seed: 8886
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/global_transformer_none_weight_first_stage_20_1.0_2.0_m_0.9_no_mask/<seed>
+output_folder: !ref results/global_transformer_none_weight_first_stage_20_0.0001_m_0.9_no_mask/<seed>
 cer_file: !ref <output_folder>/cer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
@@ -30,7 +30,7 @@ tokenizer_file: speechbrain/asr-transformer-aishell/tokenizer.ckpt
 number_of_epochs: 50
 batch_size: 16
 ctc_weight: 0.3
-gradient_accumulation: 1
+gradient_accumulation: 2
 gradient_clipping: 5.0
 loss_reduction: 'batchmean'
 sorting: random
@@ -49,7 +49,7 @@ n_mels: 80
 train_dataloader_opts:
     batch_size: !ref <batch_size>
     shuffle: True
-    num_workers: 64
+    num_workers: 16
 
 valid_dataloader_opts:
     batch_size: !ref <batch_size>
@@ -115,8 +115,8 @@ Transformer: !new:speechbrain.lobes.models.transformer.TransformerASR.GlobalTran
 
 first_stage: 20
 global_weight_scheduler: !new:speechbrain.nnet.schedulers.LinearScheduler
-    initial_value: 1.0
-    final_value: 2.0
+    initial_value: 1.0e-4 # 1.0
+    final_value: 1.0e-4 # 2.0
     epoch_count: !ref <first_stage>
 
 

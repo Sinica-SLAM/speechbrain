@@ -21,10 +21,11 @@ train_log: !ref <output_folder>/train_log.txt
 # speechbrain HuggingFace repository. However, a local path pointing to a
 # directory containing the lm.ckpt and tokenizer.ckpt may also be specified
 # instead. E.g if you want to use your own LM / tokenizer.
-pretrained_lm_tokenizer_path: speechbrain/asr-transformer-transformerlm-librispeech
+pretrained_lm_tokenizer_path: ../../LM/results/Transformer_512_h_8/2223/save
+#speechbrain/asr-transformer-transformerlm-librispeech
 
 # Data files
-data_folder: !PLACEHOLDER # e.g., /path/to/LibriSpeech
+data_folder: /mnt/md0/user_jamfly/CORPUS/LibriSpeech # !PLACEHOLDER # e.g., /path/to/LibriSpeech
 # If RIRS_NOISES dir exists in /localscratch/xxx_corpus/RIRS_NOISES
 # then data_folder_rirs should be /localscratch/xxx_corpus
 # otherwise the dataset will automatically be downloaded
@@ -46,9 +47,9 @@ ckpt_interval_minutes: 30 # save checkpoint every N min
 # Empirically, we found that this value should be >= 128.
 # Please, set your parameters accordingly.
 number_of_epochs: 110
-batch_size: 16 # This works for 2x GPUs with 32GB
+batch_size: 8 # This works for 2x GPUs with 32GB
 ctc_weight: 0.3
-gradient_accumulation: 4
+gradient_accumulation: 16
 gradient_clipping: 5.0
 loss_reduction: 'batchmean'
 sorting: random
@@ -132,11 +133,11 @@ Transformer: !new:speechbrain.lobes.models.transformer.TransformerASR.Transforme
 # NB: It has to match the pre-trained TransformerLM!!
 lm_model: !new:speechbrain.lobes.models.transformer.TransformerLM.TransformerLM # yamllint disable-line rule:line-length
     vocab: !ref <output_neurons>
-    d_model: 768
-    nhead: 12
+    d_model: 512 #768
+    nhead: 8
     num_encoder_layers: 12
     num_decoder_layers: 0
-    d_ffn: 3072
+    d_ffn: 2048
     dropout: 0.0
     activation: !name:torch.nn.GELU
     normalize_before: False

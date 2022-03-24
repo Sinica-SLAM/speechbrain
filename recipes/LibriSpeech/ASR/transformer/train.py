@@ -33,7 +33,6 @@ Authors
  * Samuele Cornell 2020
  * Titouan Parcollet 2021
 """
-import os
 import sys
 import torch
 import logging
@@ -451,12 +450,12 @@ if __name__ == "__main__":
     )
 
     # Testing
-    for k in test_datasets.keys():  # keys are test_clean, test_other etc
-        asr_brain.hparams.wer_file = os.path.join(
-            hparams["output_folder"], "wer_{}.txt".format(k)
-        )
-        asr_brain.evaluate(
-            test_datasets[k],
-            max_key="ACC",
-            test_loader_kwargs=hparams["test_dataloader_opts"],
-        )
+    #  for k in test_datasets.keys():  # keys are test_clean, test_other etc
+    #  asr_brain.hparams.wer_file = os.path.join(
+    #  hparams["output_folder"], "wer_{}.txt".format(k)
+    #  )
+    #  asr_brain.evaluate(
+    #  test_datasets[k],
+    #  max_key="ACC",
+    #  test_loader_kwargs=hparams["test_dataloader_opts"],
+    #  )
