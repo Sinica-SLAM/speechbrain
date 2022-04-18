@@ -2,7 +2,7 @@ import torch
 from torch import nn, Tensor
 from torch.nn.parameter import Parameter
 from typing import Tuple, List
-
+import math
 
 def pack_padded_sequence(inputs, lengths):
     """Returns packed speechbrain-formatted tensors.
@@ -86,11 +86,13 @@ class ConcatLSTMLayer(nn.Module):
 
     def _init_parameters(self):
         """ Basic randomization of parameters"""
+        stdv = 1.0 / math.sqrt(self.hidden_size) if self.hidden_size > 0 else 0
         for weight in self.parameters():
-            if weight.dim() > 1:
-                nn.init.xavier_normal_(weight)
-            else:
-                nn.init.zeros_(weight)  # bias vector
+            # if weight.dim() > 1:
+                # nn.init.xavier_normal_(weight)
+            # else:
+                # nn.init.zeros_(weight)  # bias vector
+            nn.init.uniform_(weight, -stdv, stdv)
 
 
 class ConcatLSTM(nn.Module):
