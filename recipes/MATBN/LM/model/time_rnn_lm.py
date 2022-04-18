@@ -96,8 +96,9 @@ class TimeRNNLM(nn.Module):
 
         x = self.embedding(x)
         x = self.dropout(x)
-
         date_contexts = self.date_embedding(date_contexts)
+        if len(date_contexts.shape) != 2:
+            date_contexts = date_contexts.mean(-2) # or mean
         date_contexts = self.dropout(date_contexts)
 
         # If 2d tensor, add a time-axis

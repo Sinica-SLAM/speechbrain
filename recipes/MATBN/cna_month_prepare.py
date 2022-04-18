@@ -38,12 +38,14 @@ def prepare_cna_week(
 
     settings = {"train": [], "test": [], "valid": []}
 
+    jsons = {}
+
     # load setting
     with open(settings_json_path, "r") as settings_file:
         settings = json.load(settings_file)
 
     for text_file_name in settings["test"]:
-        data = {}
+        data = jsons[text_file_name[:6]] if text_file_name[:6] in jsons else {}
         if not before_2000 and not text_file_name.startswith("20"):
             continue
 
@@ -53,9 +55,11 @@ def prepare_cna_week(
                 if len(line) > 128 or len(line) < 1:
                     continue
                 data[len(data)] = Data(date=text_file_name, transcription=line)
+            jsons[text_file_name[:6]] = data
             text_file.close()
 
-        save_path = os.path.join(save_folder, f"{text_file_name}.json")
+    for month_name, data in jsons.items():
+        save_path = os.path.join(save_folder, f"{month_name}.json")
         with open(save_path, "w", encoding="utf-8") as save_file:
             json.dump(
                 data,
@@ -74,7 +78,7 @@ def check_folders_exist(*folders) -> bool:
 
 
 if __name__ == "__main__":
-    save_folder = "results/prepare_cna_week"
+    save_folder = "results/prepare_cna_month"
     dataset_folder = "/mnt/md1/user_wayne/cna_all_norm"
     settings_json_path = "/mnt/md1/user_wayne/cna_all_norm/settings.json"
     before_2000 = False

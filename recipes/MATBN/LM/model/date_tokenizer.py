@@ -7,6 +7,7 @@ from typing import Dict
 class DateTokenizer:
     def __init__(self, load_path: str = None):
         self.start_date_map = {}
+        self.month_map = {}
         if load_path is not None:
             self.load(load_path)
 
@@ -28,12 +29,28 @@ class DateTokenizer:
     def load(self, load_path: str):
         with open(load_path, "rb") as f:
             self.start_date_map = pickle.load(f)
+            self.get_month_map()
+
+    def get_month_map(self):
+        for date, value in self.start_date_map.items():
+            year = date.year
+            month = date.month
+            year_month = f'{year}{month:02}'
+            if year_month in self.month_map:
+                self.month_map[year_month].append(value)
+            else:
+                self.month_map[year_month] = [value]
 
     def encode(self, date: datetime.date) -> int:
         start_date = get_start_date(date)
-        if start_date not in self.start_date_map:
-            return len(self.start_date_map)
+        # if start_date not in self.start_date_map:
+            # return len(self.start_date_map)
         return self.start_date_map[start_date]
+
+    def encode_year_month(self, year_month:str):
+        # year_month like 202101
+        return self.month_map[year_month]
+        
 
 
 def get_start_date(date: datetime.date) -> datetime.date:
