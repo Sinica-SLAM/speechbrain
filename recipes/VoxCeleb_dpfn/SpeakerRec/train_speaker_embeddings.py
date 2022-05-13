@@ -73,14 +73,17 @@ class SpeakerBrain(sb.core.Brain):
         embeddings = self.modules.embedding_model(feats)
         outputs = self.modules.classifier(embeddings)
 
-        return outputs, lens
+        return outputs, embeddings, lens
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss using speaker-id as label.
         """
-        predictions, lens = predictions
+        predictions, embeddings, lens = predictions
         uttid = batch.id
         spkid, _ = batch.spk_id_encoded
+        
+        for i in range(len(spkid)):
+            self.save_xvec(embeddings[i], uttid[i])
 
         # Concatenate labels (due to data augmentation)
         if stage == sb.Stage.TRAIN:
@@ -126,6 +129,9 @@ class SpeakerBrain(sb.core.Brain):
                 meta={"ErrorRate": stage_stats["ErrorRate"]},
                 min_keys=["ErrorRate"],
             )
+    
+    def save_xvec(self, xvec, id):
+        pass
 
 
 def dataio_prep(hparams):

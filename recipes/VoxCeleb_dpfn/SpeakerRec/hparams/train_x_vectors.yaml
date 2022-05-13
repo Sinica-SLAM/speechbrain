@@ -11,7 +11,7 @@ save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
 # Data files
-data_folder: /mnt/md0/user_fal1210/corpora/Corpora_30/WSJ0_SS  # e.g. /path/to/Voxceleb
+data_folder: /mnt/md0/user_fal1210/Corpora_30/WSJ0_SS  # e.g. /path/to/Voxceleb
 train_annotation: !ref <save_folder>/train.csv
 valid_annotation: !ref <save_folder>/dev.csv
 

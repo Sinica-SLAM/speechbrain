@@ -7,8 +7,8 @@ seed: 1234
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
 
 # Folders and train_log file
-data_folder: /localscratch/voxceleb1_2  # use vox 1, vox2, or vox1+vox2 datasets
-output_folder: results/voxceleb1/speaker_verification_plda_xvectors
+data_folder: /mnt/md0/user_fal1210/Corpora_135/DPFN  # use vox 1, vox2, or vox1+vox2 datasets
+output_folder: results/dpfn/xvectors
 save_folder: !ref <output_folder>/save/
 device: 'cuda:0'
 
@@ -24,12 +24,12 @@ verification_file: https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/veri_test
 # is downloaded from the speechbrain HuggingFace repository.
 # However, a local path pointing to a directory containing your checkpoints may also be specified
 # instead (see pretrainer below)
-pretrain_path: speechbrain/spkrec-xvect-voxceleb
+pretrain_path: /mnt/md0/user_fal1210/SLAM/speechbrain/recipes/VoxCeleb_dpfn/SpeakerRec/results/xvect_augment/1986/save/CKPT+2022-05-12+02-01-47+00
 
 # csv files
-train_data: !ref <save_folder>/train.csv
-enrol_data: !ref <save_folder>/enrol.csv
-test_data: !ref <save_folder>/test.csv
+train_data: !ref <save_folder>/train_dpfn.csv
+dev_data: !ref <save_folder>/dev_dpfn.csv
+test_data: !ref <save_folder>/test_dpfn.csv
 
 batch_size: 128
 n_train_snts: 300000 # used for normalization stats
@@ -42,7 +42,7 @@ emb_dim: 512
 train_dataloader_opts:
     batch_size: !ref <batch_size>
 
-enrol_dataloader_opts:
+dev_dataloader_opts:
     batch_size: !ref <batch_size>
 
 test_dataloader_opts:
@@ -78,7 +78,7 @@ pretrainer: !new:speechbrain.utils.parameter_transfer.Pretrainer
     collect_in: !ref <save_folder>
     loadables:
         embedding_model: !ref <embedding_model>
-        mean_var_norm_emb: !ref <mean_var_norm_emb>
+        # mean_var_norm_emb: !ref <mean_var_norm_emb>
     paths:
         embedding_model: !ref <pretrain_path>/embedding_model.ckpt
-        mean_var_norm_emb: !ref <pretrain_path>/mean_var_norm_emb.ckpt
+        # mean_var_norm_emb: !ref <pretrain_path>/mean_var_norm_emb.ckpt
