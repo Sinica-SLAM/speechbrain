@@ -294,6 +294,221 @@ def prepare_dpfn(
     save_pkl(conf, save_opt)
 
 
+def prepare_xvec_dataset(
+    data_folder,
+    save_folder,
+    amp_th=5e-04,
+    source=None,
+    split_speaker=False,
+    random_segment=False,
+    skip_prep=False,
+):
+    """
+    Prepares the csv files for the Voxceleb1 or Voxceleb2 datasets.
+    Please follow the instructions in the README.md file for
+    preparing Voxceleb2.
+
+    Arguments
+    ---------
+    data_folder : str
+        Path to the folder where the original VoxCeleb dataset is stored.
+    save_folder : str
+        The directory where to store the csv files.
+    verification_pairs_file : str
+        txt file containing the verification split.
+    splits : list
+        List of splits to prepare from ['train', 'dev']
+    split_ratio : list
+        List if int for train and validation splits
+    seg_dur : int
+        Segment duration of a chunk in seconds (e.g., 3.0 seconds).
+    amp_th : float
+        removes segments whose average amplitude is below the
+        given threshold.
+    source : str
+        Path to the folder where the VoxCeleb dataset source is stored.
+    split_speaker : bool
+        Speaker-wise split
+    random_segment : bool
+        Train random segments
+    skip_prep: Bool
+        If True, skip preparation.
+
+    Example
+    -------
+    >>> from recipes.VoxCeleb.voxceleb1_prepare import prepare_voxceleb
+    >>> data_folder = 'data/VoxCeleb1/'
+    >>> save_folder = 'VoxData/'
+    >>> splits = ['train', 'dev']
+    >>> split_ratio = [90, 10]
+    >>> prepare_voxceleb(data_folder, save_folder, splits, split_ratio)
+    """
+
+    if skip_prep:
+        return
+    # Create configuration for easily skipping data_preparation stage
+    conf = {
+        "data_folder": data_folder,
+        "save_folder": save_folder,
+        "split_speaker": split_speaker,
+    }
+
+    if not os.path.exists(save_folder):
+        os.makedirs(save_folder)
+
+    # Setting ouput files
+    save_opt = os.path.join(save_folder, OPT_FILE)
+    save_csv_train = os.path.join(save_folder, 'train_dpfn.csv')
+
+
+    # Additional checks to make sure the data folder contains VoxCeleb data
+    if "," in data_folder:
+        data_folder = data_folder.replace(" ", "").split(",")
+    else:
+        data_folder = [data_folder]
+    
+    # _check_voxceleb1_folders(data_folder, splits)
+
+    msg = "\tCreating csv file for the custom Dataset.."
+    logger.info(msg)
+
+    # print(wav_lst_train)
+    # Creating csv file for training data
+    wav_lst = _get_utt_lists(
+        data_folder, "train"
+    )
+    prepare_xvec_csv(
+        wav_lst, save_csv_train, random_segment, amp_th
+    )
+
+    # Saving options (useful to skip this phase when already done)
+    save_pkl(conf, save_opt)
+
+
+def prepare_extr(
+    data_folder,
+    save_folder,
+    verification_pairs_file,
+    splits=["train", "dev", "test"],
+    split_ratio=[90, 10],
+    seg_dur=3.0,
+    amp_th=5e-04,
+    source=None,
+    split_speaker=False,
+    random_segment=False,
+    skip_prep=False,
+):
+    """
+    Prepares the csv files for the Voxceleb1 or Voxceleb2 datasets.
+    Please follow the instructions in the README.md file for
+    preparing Voxceleb2.
+
+    Arguments
+    ---------
+    data_folder : str
+        Path to the folder where the original VoxCeleb dataset is stored.
+    save_folder : str
+        The directory where to store the csv files.
+    verification_pairs_file : str
+        txt file containing the verification split.
+    splits : list
+        List of splits to prepare from ['train', 'dev']
+    split_ratio : list
+        List if int for train and validation splits
+    seg_dur : int
+        Segment duration of a chunk in seconds (e.g., 3.0 seconds).
+    amp_th : float
+        removes segments whose average amplitude is below the
+        given threshold.
+    source : str
+        Path to the folder where the VoxCeleb dataset source is stored.
+    split_speaker : bool
+        Speaker-wise split
+    random_segment : bool
+        Train random segments
+    skip_prep: Bool
+        If True, skip preparation.
+
+    Example
+    -------
+    >>> from recipes.VoxCeleb.voxceleb1_prepare import prepare_voxceleb
+    >>> data_folder = 'data/VoxCeleb1/'
+    >>> save_folder = 'VoxData/'
+    >>> splits = ['train', 'dev']
+    >>> split_ratio = [90, 10]
+    >>> prepare_voxceleb(data_folder, save_folder, splits, split_ratio)
+    """
+
+    if skip_prep:
+        return
+    # Create configuration for easily skipping data_preparation stage
+    conf = {
+        "data_folder": data_folder,
+        "splits": splits,
+        "split_ratio": split_ratio,
+        "save_folder": save_folder,
+        "seg_dur": seg_dur,
+        "split_speaker": split_speaker,
+    }
+
+    if not os.path.exists(save_folder):
+        os.makedirs(save_folder)
+
+    # Setting ouput files
+    save_opt = os.path.join(save_folder, OPT_FILE)
+    save_csv_train = os.path.join(save_folder, 'train_extr.csv')
+    save_csv_dev = os.path.join(save_folder, 'dev_extr.csv')
+    save_csv_test = os.path.join(save_folder, 'test_extr.csv')
+
+
+    # Check if this phase is already done (if so, skip it)
+    if skip(splits, save_folder, conf):
+        logger.info("Skipping preparation, completed in previous run.")
+        return
+
+    # Additional checks to make sure the data folder contains VoxCeleb data
+    if "," in data_folder:
+        data_folder = data_folder.replace(" ", "").split(",")
+    else:
+        data_folder = [data_folder]
+    
+    # _check_voxceleb1_folders(data_folder, splits)
+
+    msg = "\tCreating csv file for the extr Dataset.."
+    logger.info(msg)
+
+    
+
+    # print(wav_lst_train)
+    # Creating csv file for training data
+    if "train" in splits:
+        wav_lst_train = _get_extr_utt_lists(
+            data_folder, "train"
+        )
+        prepare_extr_csv(
+            seg_dur, wav_lst_train, save_csv_train, random_segment, amp_th
+        )
+
+    if "dev" in splits:
+        wav_lst_dev = _get_extr_utt_lists(
+            data_folder, "dev"
+        )
+        prepare_extr_csv(
+            seg_dur, wav_lst_dev, save_csv_dev, random_segment, amp_th
+        )
+
+    # For PLDA verification
+    if "test" in splits:
+        wav_lst_test = _get_extr_utt_lists(
+            data_folder, "test"
+        )
+        prepare_extr_csv(
+            seg_dur, wav_lst_test, save_csv_test, random_segment, amp_th
+        )
+
+    # Saving options (useful to skip this phase when already done)
+    save_pkl(conf, save_opt)
+
 
 def skip(splits, save_folder, conf):
     """
@@ -439,7 +654,7 @@ def _get_utt_split_lists(
     return train_lst, dev_lst
 
 
-def _get_utt_lists(
+def _get_wsj_utt_lists(
     data_folders, split, verification_pairs_file, split_speaker=False
 ):
     """
@@ -511,6 +726,67 @@ def _get_dpfn_utt_lists(
         for f in glob.glob(path, recursive=True):
             if 'mixture' in f:
                 continue
+            audio_files_list.append(f)
+
+        wav_lst.extend(audio_files_list)
+
+    return wav_lst
+
+
+def _get_extr_utt_lists(
+    data_folders, split
+):
+    """
+    Tot. number of speakers vox1= 1211.
+    Tot. number of speakers vox2= 5994.
+    Splits the audio file list into train and dev.
+    This function automatically removes verification test files from the training and dev set (if any).
+    """
+    wav_lst = []
+
+    print("Getting file list...")
+    for data_folder in data_folders:
+
+        if split == "train":
+            wav_dir = 'tr'
+        elif split == "dev":
+            wav_dir = 'cv'
+        elif split == "test":
+            wav_dir = 'tt'
+        else:
+            raise NotImplementedError(
+                f"We didn't implement {split}, we only have train & dev & test"
+            )
+
+        path = os.path.join(data_folder, wav_dir, "aux", "*.wav")
+
+        audio_files_list = []
+        for f in glob.glob(path, recursive=True):
+            audio_files_list.append(f)
+
+        wav_lst.extend(audio_files_list)
+
+    return wav_lst
+
+
+def _get_utt_lists(
+    data_folders, split
+):
+    """
+    Tot. number of speakers vox1= 1211.
+    Tot. number of speakers vox2= 5994.
+    Splits the audio file list into train and dev.
+    This function automatically removes verification test files from the training and dev set (if any).
+    """
+    wav_lst = []
+
+    print("Getting file list...")
+    for data_folder in data_folders:
+
+        path = os.path.join(data_folder, "**", "*.wav")
+
+        audio_files_list = []
+        for f in glob.glob(path, recursive=True):
             audio_files_list.append(f)
 
         wav_lst.extend(audio_files_list)
@@ -782,6 +1058,158 @@ def prepare_dpfn_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0)
             spk_id = spk2
         else:
             raise NotImplementedError(f"We only implement s1 and s2, but we got {utt_id} in utt_id")
+        
+        # Reading the signal (to retrieve duration in seconds)
+        signal, fs = torchaudio.load(wav_file)
+        signal = signal.squeeze(0)
+
+        audio_duration = signal.shape[0] / SAMPLERATE
+
+        #  Avoid chunks with very small energy
+        mean_sig = torch.mean(np.abs(signal[:]))
+        if mean_sig < amp_th:
+            continue
+
+        # Composition of the csv_line
+        csv_line = [
+            audio_id,
+            str(audio_duration),
+            wav_file,
+            0,
+            signal.shape[0],
+            spk_id,
+        ]
+        entry.append(csv_line)
+
+    csv_output = csv_output + entry
+
+    # Writing the csv lines
+    with open(csv_file, mode="w") as csv_f:
+        csv_writer = csv.writer(
+            csv_f, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
+        )
+        for line in csv_output:
+            csv_writer.writerow(line)
+
+    # Final prints
+    msg = "\t%s successfully created!" % (csv_file)
+    logger.info(msg)
+
+
+def prepare_extr_csv(seg_dur, wav_lst, csv_file, random_segment=False, amp_th=0):
+    """
+    Creates the csv file given a list of wav files.
+
+    Arguments
+    ---------
+    wav_lst : list
+        The list of wav files of a given data split.
+    csv_file : str
+        The path of the output csv file
+    random_segment: bool
+        Read random segments
+    amp_th: float
+        Threshold on the average amplitude on the chunk.
+        If under this threshold, the chunk is discarded.
+
+    Returns
+    -------
+    None
+    """
+
+    msg = '\t"Creating csv lists in  %s..."' % (csv_file)
+    logger.info(msg)
+
+    csv_output = [["ID", "duration", "wav", "start", "stop", "spk_id"]]
+
+    # For assigning unique ID to each chunk
+    my_sep = "--"
+    entry = []
+    # Processing all the wav files in the list
+    for wav_file in tqdm(wav_lst, dynamic_ncols=True):
+        # Getting sentence and speaker ids
+        try:
+            [ex_id, utt_id] = wav_file.split("/")[-2:]
+        except ValueError:
+            logger.info(f"Malformed path: {wav_file}")
+            continue
+        audio_id = utt_id[:-4]
+
+        spk_id = utt_id.split('-')[-1][:3]
+        
+        # Reading the signal (to retrieve duration in seconds)
+        signal, fs = torchaudio.load(wav_file)
+        signal = signal.squeeze(0)
+
+        audio_duration = signal.shape[0] / SAMPLERATE
+
+        #  Avoid chunks with very small energy
+        mean_sig = torch.mean(np.abs(signal[:]))
+        if mean_sig < amp_th:
+            continue
+
+        # Composition of the csv_line
+        csv_line = [
+            audio_id,
+            str(audio_duration),
+            wav_file,
+            0,
+            signal.shape[0],
+            spk_id,
+        ]
+        entry.append(csv_line)
+
+    csv_output = csv_output + entry
+
+    # Writing the csv lines
+    with open(csv_file, mode="w") as csv_f:
+        csv_writer = csv.writer(
+            csv_f, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
+        )
+        for line in csv_output:
+            csv_writer.writerow(line)
+
+    # Final prints
+    msg = "\t%s successfully created!" % (csv_file)
+    logger.info(msg)
+
+
+def prepare_xvec_csv(wav_lst, csv_file, random_segment=False, amp_th=0):
+    """
+    Creates the csv file given a list of wav files.
+
+    Arguments
+    ---------
+    wav_lst : list
+        The list of wav files of a given data split.
+    csv_file : str
+        The path of the output csv file
+    random_segment: bool
+        Read random segments
+    amp_th: float
+        Threshold on the average amplitude on the chunk.
+        If under this threshold, the chunk is discarded.
+
+    Returns
+    -------
+    None
+    """
+
+    msg = '\t"Creating csv lists in  %s..."' % (csv_file)
+    logger.info(msg)
+
+    csv_output = [["ID", "duration", "wav", "start", "stop", "spk_id"]]
+
+    # For assigning unique ID to each chunk
+    my_sep = "--"
+    entry = []
+    # Processing all the wav files in the list
+    for wav_file in tqdm(wav_lst, dynamic_ncols=True):
+        # Getting sentence and speaker ids
+        utt_id = wav_file.split("/")[-1]
+        audio_id = utt_id.split(".")[0]
+
+        spk_id = audio_id.split('-')[-1][:3]
         
         # Reading the signal (to retrieve duration in seconds)
         signal, fs = torchaudio.load(wav_file)

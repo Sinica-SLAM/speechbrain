@@ -79,8 +79,10 @@ def compute_embedding_loop(data_loader, split, output_folder):
                 embedding_dict[seg_id] = emb[i].detach().clone()
                 [ex_id, utt_id] = seg_id.split('--')
                 save_path = os.path.join(save_dir, ex_id)
+                # save_path = os.path.join(save_dir, 'aux')
                 os.makedirs(save_path, exist_ok=True)
                 numpy.save(save_path + f'/{utt_id}', emb[i].detach().cpu())
+                # numpy.save(save_path + f'/{seg_id}', emb[i].detach().cpu())
     return embedding_dict
 
 
@@ -207,7 +209,7 @@ if __name__ == "__main__":
     )
     download_file(params["verification_file"], veri_file_path)
 
-    from wsj0_prepare import prepare_dpfn  # noqa E402
+    from wsj0_prepare import prepare_extr, prepare_dpfn  # noqa E402
 
     # Create experiment directory
     sb.core.create_experiment_directory(

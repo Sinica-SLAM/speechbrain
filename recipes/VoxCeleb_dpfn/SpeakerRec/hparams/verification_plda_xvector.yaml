@@ -7,8 +7,9 @@ seed: 1234
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
 
 # Folders and train_log file
-data_folder: /mnt/md0/user_fal1210/Corpora_135/DPFN  # use vox 1, vox2, or vox1+vox2 datasets
-output_folder: results/dpfn/xvectors
+# data_folder: /mnt/md0/user_fal1210/corpora/mix_extr/data_wsj0-extr/wav8k/max  # use vox 1, vox2, or vox1+vox2 datasets
+data_folder: /mnt/md0/user_fal1210/Corpora_30/DPFN
+output_folder: results/dpfn/xvectors_pretrain
 save_folder: !ref <output_folder>/save/
 device: 'cuda:0'
 
@@ -24,7 +25,8 @@ verification_file: https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/veri_test
 # is downloaded from the speechbrain HuggingFace repository.
 # However, a local path pointing to a directory containing your checkpoints may also be specified
 # instead (see pretrainer below)
-pretrain_path: /mnt/md0/user_fal1210/SLAM/speechbrain/recipes/VoxCeleb_dpfn/SpeakerRec/results/xvect_augment/1986/save/CKPT+2022-05-12+02-01-47+00
+# pretrain_path: /mnt/md0/user_fal1210/SLAM/speechbrain/recipes/VoxCeleb_dpfn/SpeakerRec/results/xvect_augment/1986/save/CKPT+2022-05-12+02-01-47+00
+pretrain_path: speechbrain/spkrec-xvect-voxceleb
 
 # csv files
 train_data: !ref <save_folder>/train_dpfn.csv
@@ -78,7 +80,7 @@ pretrainer: !new:speechbrain.utils.parameter_transfer.Pretrainer
     collect_in: !ref <save_folder>
     loadables:
         embedding_model: !ref <embedding_model>
-        # mean_var_norm_emb: !ref <mean_var_norm_emb>
+        mean_var_norm_emb: !ref <mean_var_norm_emb>
     paths:
         embedding_model: !ref <pretrain_path>/embedding_model.ckpt
-        # mean_var_norm_emb: !ref <pretrain_path>/mean_var_norm_emb.ckpt
+        mean_var_norm_emb: !ref <pretrain_path>/mean_var_norm_emb.ckpt
