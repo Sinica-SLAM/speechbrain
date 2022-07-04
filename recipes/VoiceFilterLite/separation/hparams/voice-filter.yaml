@@ -1,0 +1,178 @@
+# ################################
+# Model: SepFormer for source separation
+# https://arxiv.org/abs/2010.13154
+# Dataset : WSJ0-2mix and WSJ0-3mix
+# ################################
+# Basic parameters
+# Seed needs to be set at top of yaml, before objects with parameters are made
+#
+seed: 1234
+__set_seed: !apply:torch.manual_seed [!ref <seed>]
+
+# Data params
+
+# e.g. '/yourpath/wsj0-mix/2speakers'
+# end with 2speakers for wsj0-2mix or 3speakers for wsj0-3mix
+data_folder: /mnt/md0/user_fal1210/corpora/mix_extr/data_wsj0-extr
+rir_folder: /mnt/md0/user_fal1210/corpora
+
+# the path for wsj0/si_tr_s/ folder -- only needed if dynamic mixing is used
+# e.g. /yourpath/wsj0-processed/si_tr_s/
+base_folder_dm: /yourpath/wsj0-processed/si_tr_s/
+
+experiment_name: voicefilter_ori
+output_folder: !ref results/<experiment_name>/<seed>
+train_log: !ref <output_folder>/train_log.txt
+save_folder: !ref <output_folder>/save
+train_data: !ref <save_folder>/wsj_extr_tr.csv
+valid_data: !ref <save_folder>/wsj_extr_cv.csv
+test_data: !ref <save_folder>/wsj_extr_tt.csv
+skip_prep: False
+
+
+# Experiment params
+auto_mix_prec: False # Set it to True for mixed precision
+test_only: False
+num_spks: 2 # set to 3 for wsj0-3mix
+progressbar: True
+save_audio: False # Save estimated sources on disk
+sample_rate: 8000
+
+# Training parameters
+N_epochs: 500
+batch_size: 16
+lr: 0.00015
+clip_grad_norm: 5
+loss_upper_lim: 999999  # this is the upper limit for an acceptable loss
+# if True, the training sequences are cut to a specified length
+limit_training_signal_len: False
+# this is the length of sequences if we choose to limit
+# the signal length of training sequences
+training_signal_len: 32000000
+penalty: 1
+num_save_spec: 5
+
+# Set it to True to dynamically create mixtures at training time
+dynamic_mixing: False
+
+# Parameters for data augmentation
+use_wavedrop: False
+use_speedperturb: True
+use_speedperturb_sameforeachsource: False
+use_rand_shift: False
+use_add_rev: False
+use_add_noise: False
+use_add_rev_noise: False
+min_shift: -8000
+max_shift: 8000
+
+speedperturb: !new:speechbrain.lobes.augment.TimeDomainSpecAugment
+    perturb_prob: 1.0
+    drop_freq_prob: 0.0
+    drop_chunk_prob: 0.0
+    sample_rate: !ref <sample_rate>
+    speeds: [95, 100, 105]
+
+wavedrop: !new:speechbrain.lobes.augment.TimeDomainSpecAugment
+    perturb_prob: 0.0
+    drop_freq_prob: 1.0
+    drop_chunk_prob: 1.0
+    sample_rate: !ref <sample_rate>
+
+add_rev: !new:speechbrain.lobes.augment.EnvCorrupt
+    openrir_folder: !ref <rir_folder>
+    openrir_max_noise_len: 3.0  # seconds
+    reverb_prob: 1.0
+    noise_prob: 0.0
+    noise_snr_low: 0
+    noise_snr_high: 15
+    rir_scale_factor: 1.0
+
+add_noise: !new:speechbrain.lobes.augment.EnvCorrupt
+    openrir_folder: !ref <rir_folder>
+    openrir_max_noise_len: 3.0  # seconds
+    reverb_prob: 0.0
+    noise_prob: 1.0
+    noise_snr_low: 0
+    noise_snr_high: 15
+    rir_scale_factor: 1.0
+
+add_rev_noise: !new:speechbrain.lobes.augment.EnvCorrupt
+    openrir_folder: !ref <rir_folder>
+    openrir_max_noise_len: 3.0  # seconds
+    reverb_prob: 1.0
+    noise_prob: 1.0
+    noise_snr_low: 0
+    noise_snr_high: 15
+    rir_scale_factor: 1.0
+
+# loss thresholding -- this thresholds the training loss
+threshold_byloss: True
+threshold: -30
+
+# Feature parameters
+win_length: 32
+hop_length: 10
+n_mels: 128
+f_min: 125
+f_max: 7500
+left_frames: 0
+right_frames: 0
+deltas: False
+emb_dim: 512
+feature_dim: 512
+
+# Model parameters
+bi_lstm: False
+fc_dim: 128
+
+# Dataloader options
+dataloader_opts:
+    batch_size: !ref <batch_size>
+    num_workers: 3
+
+# Functions
+compute_features: !new:speechbrain.lobes.features.Fbank
+    sample_rate: !ref <sample_rate>
+    win_length: !ref <win_length>
+    hop_length: !ref <hop_length>
+    n_mels: !ref <n_mels>
+    f_min: !ref <f_min>
+    f_max: !ref <f_max>
+    left_frames: !ref <left_frames>
+    right_frames: !ref <right_frames>
+    deltas: !ref <deltas>
+
+# Specifying the network
+VoiceFilter: !new:speechbrain.lobes.models.voicefilter.VoiceFilter
+    feature_dim: !ref <feature_dim>
+    emb_dim: !ref <emb_dim>
+    bi_lstm: !ref <bi_lstm>
+    fc_dim: !ref <fc_dim>
+
+optimizer: !name:torch.optim.Adam
+    lr: !ref <lr>
+    weight_decay: 0
+
+loss: !name:speechbrain.nnet.losses.asymmetric_loss
+
+lr_scheduler: !new:speechbrain.nnet.schedulers.ReduceLROnPlateau
+    factor: 0.5
+    patience: 2
+    dont_halve_until_epoch: 85
+
+epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
+    limit: !ref <N_epochs>
+
+modules:
+    voicefilter: !ref <VoiceFilter>
+
+checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
+    checkpoints_dir: !ref <save_folder>
+    recoverables:
+        voicefilter: !ref <VoiceFilter>
+        counter: !ref <epoch_counter>
+        lr_scheduler: !ref <lr_scheduler>
+
+train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
+    save_file: !ref <train_log>
