@@ -639,13 +639,17 @@ class SBRNNBlock(nn.Module):
         rnn_type="LSTM",
         dropout=0,
         bidirectional=True,
+        mask_end=False,
     ):
         super(SBRNNBlock, self).__init__()
 
+        self.bidirectional = bidirectional
+        if mask_end:
+            cond_group = 1
         hidden_channels = hidden_channels * cond_group
         input_size = input_size * cond_group
         self.mdl = getattr(SBRNN, rnn_type)(
-            hidden_channels // 2 if bidirectional else hidden_channels,
+            hidden_channels,
             input_size=input_size,
             num_layers=num_layers,
             dropout=dropout,
@@ -803,6 +807,9 @@ class Dual_Computation_Block(nn.Module):
         dropout=0.1,
         skip_around_intra=True,
         linear_layer_after_inter_intra=True,
+        cond_weight_exp=False,
+        skip_intra_sqrt=False,
+        mask_end=False,
     ):
         super(Dual_Computation_Block, self).__init__()
 
@@ -810,45 +817,62 @@ class Dual_Computation_Block(nn.Module):
         self.inter_mdl = inter_mdl
         self.skip_around_intra = skip_around_intra
         self.linear_layer_after_inter_intra = linear_layer_after_inter_intra
+        self.cond_weight_exp = cond_weight_exp
+        self.skip_intra_sqrt = skip_intra_sqrt
+        self.mask_end = mask_end
         self.n_spk = num_speakers
 
         # Norm
         self.norm = norm
         if norm is not None:
+            norm_dim = out_channels if mask_end else out_channels * cond_group
             self.intra_norm = nn.Sequential(
-                select_norm(norm, out_channels * cond_group, 4),
+                select_norm(norm, norm_dim, 4),
                 nn.Dropout(p=dropout),
             )
             self.inter_norm = nn.Sequential(
-                select_norm(norm, out_channels * cond_group, 4),
+                select_norm(norm, norm_dim, 4),
                 nn.Dropout(p=dropout),
             )
 
         # Linear
-        if linear_layer_after_inter_intra:
-            self.intra_linear = Linear(
-                out_channels * cond_group, input_size=out_channels * cond_group,
-            )
+        if linear_layer_after_inter_intra or isinstance(intra_mdl, SBRNNBlock):
+            linear_dim = out_channels if mask_end else out_channels * cond_group
+            if isinstance(intra_mdl, SBRNNBlock):
+                self.intra_linear = Linear(
+                    linear_dim, input_size=2 * intra_mdl.mdl.rnn.hidden_size
+                )
+            else:
+                self.intra_linear = Linear(
+                    linear_dim, input_size=linear_dim
+                )
 
-            self.inter_linear = Linear(
-                out_channels * cond_group, input_size=out_channels * cond_group,
-            )
+            if isinstance(inter_mdl, SBRNNBlock):
+                self.inter_linear = Linear(
+                    linear_dim, input_size=2 * intra_mdl.mdl.rnn.hidden_size
+                )
+            else:
+                self.inter_linear = Linear(
+                    linear_dim, input_size=linear_dim
+                )
 
         # Set conditional layers
         self.group = cond_group
         assert out_channels % cond_group == 0
         use_affine = True if use_adain else use_affine
-        num_nl_hidden = out_channels * cond_group if use_adain else 1
+        
+        num_nl_hidden = out_channels if mask_end else out_channels * cond_group
+        num_nl_hidden = num_nl_hidden if use_adain else 1
 
         if dim_cond > 0:
             self.cond_b_intra = nn.Linear(
-                dim_cond * cond_group, out_channels * cond_group
+                dim_cond * cond_group, num_nl_hidden
             )
             self.cond_nl_intra = nn.PReLU(
                 num_parameters=num_nl_hidden, init=0.2
             )
             self.cond_b_inter = nn.Linear(
-                dim_cond * cond_group, out_channels * cond_group
+                dim_cond * cond_group, num_nl_hidden
             )
             self.cond_nl_inter = nn.PReLU(
                 num_parameters=num_nl_hidden, init=0.2
@@ -861,10 +885,10 @@ class Dual_Computation_Block(nn.Module):
 
         if dim_cond > 0 and use_affine:
             self.cond_a_intra = nn.Linear(
-                dim_cond * cond_group, out_channels * cond_group
+                dim_cond * cond_group, num_nl_hidden
             )
             self.cond_a_inter = nn.Linear(
-                dim_cond * cond_group, out_channels * cond_group
+                dim_cond * cond_group, num_nl_hidden
             )
         else:
             self.cond_a_intra = None
@@ -896,7 +920,10 @@ class Dual_Computation_Block(nn.Module):
                K = time points in each chunk
                S = the number of chunks
         """
-        Group = self.group
+        if self.mask_end:
+            Group = 1
+        else:
+            Group = self.group
         B, N, K, S = x.shape
         # B_size = B // self.n_spk
 
@@ -906,7 +933,10 @@ class Dual_Computation_Block(nn.Module):
         # [B/G, N_c*G]
         if C is not None:
             _, N_c = C.shape
-            C = C.view(-1, N_c * Group)
+            if self.mask_end:
+                C = C.view(-1, N_c * self.n_spk)
+            else:
+                C = C.view(-1, N_c * Group)
 
         # intra RNN
         # [BS/G, K, NG]
@@ -920,7 +950,7 @@ class Dual_Computation_Block(nn.Module):
         intra = self.intra_mdl(intra)
 
         # [BS/G, K, NG]
-        if self.linear_layer_after_inter_intra:
+        if self.linear_layer_after_inter_intra or isinstance(self.intra_mdl, SBRNNBlock):
             intra = self.intra_linear(intra)
 
         # [B/G, S, K, NG]
@@ -934,7 +964,9 @@ class Dual_Computation_Block(nn.Module):
 
         # [B/G, NG, K, S]
         if self.skip_around_intra:
-            intra = (intra + x) * math.sqrt(0.5)
+            intra = (intra + x) 
+            if self.skip_intra_sqrt:
+                intra *= math.sqrt(0.5)
 
         # inter RNN
         # [BK/G, S, NG]
@@ -947,7 +979,7 @@ class Dual_Computation_Block(nn.Module):
         inter = self.inter_mdl(inter)
 
         # [BK/G, S, NG]
-        if self.linear_layer_after_inter_intra:
+        if self.linear_layer_after_inter_intra or isinstance(self.intra_mdl, SBRNNBlock):
             inter = self.inter_linear(inter)
 
         # [B/G, K, S, NG]
@@ -959,7 +991,10 @@ class Dual_Computation_Block(nn.Module):
         if self.norm is not None:
             inter = self.inter_norm(inter)
         # [B/G, NG, K, S]
-        out = (inter + intra) * math.sqrt(0.5)
+        
+        out = (inter + intra) 
+        if self.skip_intra_sqrt:
+            out *= math.sqrt(0.5)
 
         return out.view(B, N, K, S)
 
@@ -969,10 +1004,12 @@ class Dual_Computation_Block(nn.Module):
         elif self.cond_in_intra:
             Batch = C.size(0)
             Ca = (
-                self.cond_a_intra(C).view(Batch, -1, 1, 1).exp()
+                self.cond_a_intra(C).view(Batch, -1, 1, 1)
                 if self.cond_a_intra
                 else 1.0
             )
+            if self.cond_weight_exp:
+                Ca = Ca.exp()
             Cb = (
                 self.cond_b_intra(C).view(Batch, -1, 1, 1)
                 if self.cond_b_intra
@@ -984,10 +1021,12 @@ class Dual_Computation_Block(nn.Module):
         else:
             Batch = C.size(0)
             Ca = (
-                self.cond_a_intra(C).view(Batch, 1, 1, -1).exp()
+                self.cond_a_intra(C).view(Batch, 1, 1, -1)
                 if self.cond_a_intra
                 else 1.0
             )
+            if self.cond_weight_exp:
+                Ca = Ca.exp()
             Cb = (
                 self.cond_b_intra(C).view(Batch, 1, 1, -1)
                 if self.cond_b_intra
@@ -1001,10 +1040,12 @@ class Dual_Computation_Block(nn.Module):
         elif self.cond_in_inter:
             Batch = C.size(0)
             Ca = (
-                self.cond_a_inter(C).view(Batch, -1, 1, 1).exp()
+                self.cond_a_inter(C).view(Batch, -1, 1, 1)
                 if self.cond_a_inter
                 else 1.0
             )
+            if self.cond_weight_exp:
+                Ca = Ca.exp()
             Cb = (
                 self.cond_b_inter(C).view(Batch, -1, 1, 1)
                 if self.cond_b_inter
@@ -1016,10 +1057,12 @@ class Dual_Computation_Block(nn.Module):
         else:
             Batch = C.size(0)
             Ca = (
-                self.cond_a_inter(C).view(Batch, 1, 1, -1).exp()
+                self.cond_a_inter(C).view(Batch, 1, 1, -1)
                 if self.cond_a_inter
                 else 1.0
             )
+            if self.cond_weight_exp:
+                Ca = Ca.exp()
             Cb = (
                 self.cond_b_inter(C).view(Batch, 1, 1, -1)
                 if self.cond_b_inter
@@ -1087,6 +1130,10 @@ class DualPath_Model(nn.Module):
         dropout=0.1,
         skip_around_intra=True,
         linear_layer_after_inter_intra=True,
+        cond_weight_exp = False,
+        skip_intra_sqrt = False,
+        copy_mix = True,
+        mask_end = False,
         use_global_pos_enc=False,
         max_length=20000,
     ):
@@ -1098,6 +1145,9 @@ class DualPath_Model(nn.Module):
         self.conv1d = nn.Conv1d(in_channels, out_channels, 1, bias=False)
         self.use_global_pos_enc = use_global_pos_enc
         self.output_layer = output_layer
+        self.copy_mix = copy_mix
+        self.mask_end = mask_end
+        self.conv2d_mix = nn.Conv2d(out_channels, out_channels * num_spks, kernel_size=1)
 
         if self.use_global_pos_enc:
             self.pos_enc = PositionalEncoding(max_length)
@@ -1119,11 +1169,17 @@ class DualPath_Model(nn.Module):
                         dropout=dropout,
                         skip_around_intra=skip_around_intra,
                         linear_layer_after_inter_intra=linear_layer_after_inter_intra,
+                        cond_weight_exp = cond_weight_exp,
+                        skip_intra_sqrt = skip_intra_sqrt,
+                        mask_end = mask_end,
                     )
                 )
             )
 
-        self.conv2d = nn.Conv2d(out_channels, out_channels, kernel_size=1)
+        if mask_end:
+            self.conv2d = nn.Conv2d(out_channels, out_channels * num_spks, kernel_size=1)
+        else:
+            self.conv2d = nn.Conv2d(out_channels, out_channels, kernel_size=1)
         self.end_conv1x1 = nn.Conv1d(out_channels, in_channels, 1, bias=False)
         self.prelu = nn.PReLU()
         self.activation = nn.ReLU()
@@ -1169,6 +1225,12 @@ class DualPath_Model(nn.Module):
 
         # [B_size*spks, N, K, S]
         x, gap = self._Segmentation(x, self.K)
+        
+        # [B_size*spks, N, L]
+        if not self.copy_mix and not self.mask_end:
+            B, N, K, S = x.shape
+            x = self.conv2d_mix(x)
+            x = x.view(B * self.num_spks, N, K, S)
 
         if self.output_layer:
             Xs = []
@@ -1182,6 +1244,9 @@ class DualPath_Model(nn.Module):
                 # [B_size*spks, N, K, S]
                 x = self.prelu(_x)
                 x = self.conv2d(x)
+                if self.mask_end:
+                    B, _, K, S = x.shape
+                    x = x.view(B * self.num_spks, -1, K, S)
 
                 # [B*spks, N, L]
                 x = self._over_add(x, gap)
@@ -1202,6 +1267,9 @@ class DualPath_Model(nn.Module):
             # [B_size*spks, N, K, S]
             x = self.prelu(x)
             x = self.conv2d(x)
+            if self.mask_end:
+                B, _, K, S = x.shape
+                x = x.view(B * self.num_spks, -1, K, S)
 
             # [B*spks, N, L]
             x = self._over_add(x, gap)

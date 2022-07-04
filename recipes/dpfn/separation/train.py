@@ -29,17 +29,263 @@ import torchaudio
 import speechbrain as sb
 import speechbrain.nnet.schedulers as schedulers
 from speechbrain.utils.distributed import run_on_main
+from speechbrain.dataio.dataloader import LoopedLoader
 from torch.cuda.amp import autocast
+from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader
 from hyperpyyaml import load_hyperpyyaml
 import numpy as np
 from tqdm import tqdm
+from enum import Enum, auto
 import csv
 import logging
+import time
+
+class Stage(Enum):
+    """Simple enum to track stage of experiments."""
+
+    TRAIN = auto()
+    VALID = auto()
+    TEST = auto()
 
 
 # Define training procedure
 class Separation(sb.Brain):
-    def compute_forward(self, mix, targets, targets_e, ids, stage, noise=None):
+    def __init__(self, 
+            modules=None,
+            opt_class=None,
+            hparams=None,
+            run_opts=None,
+            checkpointer=None,
+            writer=None,
+        ):
+        super().__init__(modules, opt_class, hparams, run_opts, checkpointer,)
+        
+        if self.hparams.init_weight:
+            encoder_ckpt = os.path.join(self.hparams.weight_folder, "encoder.ckpt")
+            self.modules.encoder.load_state_dict(torch.load(encoder_ckpt))
+            decoder_ckpt = os.path.join(self.hparams.weight_folder, "decoder.ckpt")
+            self.modules.decoder.load_state_dict(torch.load(decoder_ckpt))
+            masknet_ckpt = os.path.join(self.hparams.weight_folder, "masknet.ckpt")
+            pretrained_dict  = torch.load(masknet_ckpt)
+            masknet_dict = self.modules.masknet.state_dict()
+            # 1. filter out unnecessary keys
+            pretrained_needed_dict = {}
+            for k, v in pretrained_dict.items():
+                if k in masknet_dict and v.shape == masknet_dict[k].shape:
+                    pretrained_needed_dict[k] = v
+            # 2. overwrite entries in the existing state dict
+            # print(list(pretrained_needed_dict.keys()))
+            masknet_dict.update(pretrained_needed_dict)
+            # 3. load the new state dict
+            self.modules.masknet.load_state_dict(masknet_dict)
+        
+        if writer is not None:
+            self.writer = SummaryWriter(writer)
+        else:
+            log_dir = os.path.join(hparams["output_folder"], 'log')
+            os.makedirs(log_dir, exist_ok=True)
+            self.writer = SummaryWriter(log_dir)
+            
+    def fit(
+        self,
+        epoch_counter,
+        train_set,
+        valid_set=None,
+        test_set=None,
+        progressbar=None,
+        train_loader_kwargs={},
+        valid_loader_kwargs={},
+    ):
+        """Iterate epochs and datasets to improve objective.
+
+        Relies on the existence of multiple functions that can (or should) be
+        overridden. The following methods are used and expected to have a
+        certain behavior:
+
+        * ``fit_batch()``
+        * ``evaluate_batch()``
+        * ``update_average()``
+
+        If the initialization was done with distributed_count > 0 and the
+        distributed_backend is ddp, this will generally handle multiprocess
+        logic, like splitting the training data into subsets for each device and
+        only saving a checkpoint on the main process.
+
+        Arguments
+        ---------
+        epoch_counter : iterable
+            Each call should return an integer indicating the epoch count.
+        train_set : Dataset, DataLoader
+            A set of data to use for training. If a Dataset is given, a
+            DataLoader is automatically created. If a DataLoader is given, it is
+            used directly.
+        valid_set : Dataset, DataLoader
+            A set of data to use for validation. If a Dataset is given, a
+            DataLoader is automatically created. If a DataLoader is given, it is
+            used directly.
+        train_loader_kwargs : dict
+            Kwargs passed to `make_dataloader()` for making the train_loader
+            (if train_set is a Dataset, not DataLoader).
+            E.G. batch_size, num_workers.
+            DataLoader kwargs are all valid.
+        valid_loader_kwargs : dict
+            Kwargs passed to `make_dataloader()` for making the valid_loader
+            (if valid_set is a Dataset, not DataLoader).
+            E.g., batch_size, num_workers.
+            DataLoader kwargs are all valid.
+        progressbar : bool
+            Whether to display the progress of each epoch in a progressbar.
+        """
+
+        if not (
+            isinstance(train_set, DataLoader)
+            or isinstance(train_set, LoopedLoader)
+        ):
+            train_set = self.make_dataloader(
+                train_set, stage=sb.Stage.TRAIN, **train_loader_kwargs
+            )
+        if valid_set is not None and not (
+            isinstance(valid_set, DataLoader)
+            or isinstance(valid_set, LoopedLoader)
+        ):
+            valid_set = self.make_dataloader(
+                valid_set,
+                stage=sb.Stage.VALID,
+                ckpt_prefix=None,
+                **valid_loader_kwargs,
+            )
+        if test_set is not None and not (
+            isinstance(test_set, DataLoader)
+            or isinstance(test_set, LoopedLoader)
+        ):
+            test_set = self.make_dataloader(
+                test_set,
+                stage=sb.Stage.VALID,
+                ckpt_prefix=None,
+                **valid_loader_kwargs,
+            )
+
+        self.on_fit_start()
+
+        if progressbar is None:
+            progressbar = not self.noprogressbar
+
+        # Iterate epochs
+        for epoch in epoch_counter:
+
+            # Training stage
+            self.on_stage_start(sb.Stage.TRAIN, epoch)
+            self.modules.train()
+
+            # Reset nonfinite count to 0 each epoch
+            self.nonfinite_count = 0
+
+            if self.train_sampler is not None and hasattr(
+                self.train_sampler, "set_epoch"
+            ):
+                self.train_sampler.set_epoch(epoch)
+
+            # Time since last intra-epoch checkpoint
+            last_ckpt_time = time.time()
+
+            # Only show progressbar if requested and main_process
+            enable = progressbar and sb.utils.distributed.if_main_process()
+            with tqdm(
+                train_set,
+                initial=self.step,
+                dynamic_ncols=True,
+                disable=not enable,
+            ) as t:
+                for batch in t:
+                    self.step += 1
+                    loss = self.fit_batch(batch)
+                    if isinstance(loss, dict):
+                        self.writer.add_scalar("train_loss", loss['si_snr'], self.step + (epoch-1) * len(t))
+                    else:
+                        self.writer.add_scalar("train_loss", loss, self.step + (epoch-1) * len(t))
+                    self.avg_train_loss = self.update_average(
+                        loss, self.avg_train_loss
+                    )
+                    t.set_postfix(train_loss=self.avg_train_loss)
+
+                    # Debug mode only runs a few batches
+                    if self.debug and self.step == self.debug_batches:
+                        break
+
+                    if (
+                        self.checkpointer is not None
+                        and self.ckpt_interval_minutes > 0
+                        and time.time() - last_ckpt_time
+                        >= self.ckpt_interval_minutes * 60.0
+                    ):
+                        run_on_main(self._save_intra_epoch_ckpt)
+                        last_ckpt_time = time.time()
+
+            # Run train "on_stage_end" on all processes
+            self.on_stage_end(sb.Stage.TRAIN, self.avg_train_loss, epoch)
+            self.avg_train_loss = 0.0
+            self.step = 0
+
+            # Validation stage
+            if valid_set is not None:
+                self.on_stage_start(sb.Stage.VALID, epoch)
+                self.modules.eval()
+                avg_valid_loss = 0.0
+                avg_test_loss = 0.0
+                avg_train_loss = 0.0
+                with torch.no_grad():
+                    for batch in tqdm(
+                        valid_set, dynamic_ncols=True, disable=not enable
+                    ):
+                        self.step += 1
+                        loss = self.evaluate_batch(batch, stage=sb.Stage.VALID)
+                        avg_valid_loss = self.update_average(
+                            loss, avg_valid_loss
+                        )
+
+                        # Debug mode only runs a few batches
+                        if self.debug and self.step == self.debug_batches:
+                            break
+                    
+                    avg_valid_loss = {'valid_loss':avg_valid_loss}
+                    
+                    if self.hparams.valid_train:
+                        self.step = 0
+                        for batch in tqdm(
+                            train_set, dynamic_ncols=True, disable=not enable
+                        ):
+                            self.step += 1
+                            loss = self.evaluate_batch(batch, stage=sb.Stage.VALID)
+                            avg_train_loss = self.update_average(
+                                loss, avg_train_loss
+                            )
+                        avg_valid_loss['train_loss'] = avg_train_loss
+                    
+                    if self.hparams.valid_test:
+                        self.step = 0
+                        for batch in tqdm(
+                            test_set, dynamic_ncols=True, disable=not enable
+                        ):
+                            self.step += 1
+                            loss = self.evaluate_batch(batch, stage=sb.Stage.VALID)
+                            avg_test_loss = self.update_average(
+                                loss, avg_test_loss
+                            )
+                        avg_valid_loss['test_loss'] = avg_test_loss
+                    
+                    # Only run validation "on_stage_end" on main process
+                    self.step = 0
+                    run_on_main(
+                        self.on_stage_end,
+                        args=[sb.Stage.VALID, avg_valid_loss, epoch],
+                    )
+
+            # Debug mode only runs a few epochs
+            if self.debug and epoch == self.debug_epochs:
+                break
+    
+    def compute_forward(self, mix, targets, targets_e, ids, vecs, vecs_e, stage, noise=None):
         """Forward computations from the mixture to the separated signals."""
 
         # Unpack lists and put tensors in the right device
@@ -65,6 +311,17 @@ class Separation(sb.Brain):
             ],
             dim=-1,
         ).to(self.device)
+        vecs = torch.cat(
+            [vecs[i][0].unsqueeze(-1) for i in range(self.hparams.num_spks)],
+            dim=-1,
+        ).to(self.device)
+        vecs_e = torch.cat(
+            [
+                vecs_e[i][0].unsqueeze(-1)
+                for i in range(self.hparams.num_spks)
+            ],
+            dim=-1,
+        ).to(self.device)
 
         # Add speech distortions
         if stage == sb.Stage.TRAIN:
@@ -82,24 +339,37 @@ class Separation(sb.Brain):
                         mix, targets, targets_e
                     )
 
-                if self.hparams.rand_choice:
-                    mix, targets, targets_e, ids = self.rand_choice(
-                        mix, targets, targets_e, ids
-                    )
+        if self.hparams.rand_choice:
+            mix, targets, targets_e, ids, vecs, vecs_e = self.rand_choice(
+                mix, targets, targets_e, ids, vecs, vecs_e, stage
+            )
 
         # Separation
         Batch, Time, Spk = targets.shape
 
-        X = mix.unsqueeze(1).repeat(1, Spk, 1)
-        X = X.flatten(0, 1)
+        if self.hparams.copy_mix and not self.hparams.mask_end:
+            X = mix.unsqueeze(1).repeat(1, Spk, 1)
+            X = X.flatten(0, 1)
+        else:
+            X = mix
         X_est = targets_e.permute(0, 2, 1).contiguous()
         X_est = X_est.flatten(0, 1).unsqueeze(1)
+        vecs_e = vecs_e.squeeze(1)
+        C_est = vecs_e.permute(0, 2, 1).contiguous()
+        C_est = C_est.flatten(0, 1).unsqueeze(1)
 
         mix_w = self.hparams.Encoder(X)
         X_est_w = self.hparams.Encoder(X_est.squeeze(1))
         C, mid, spec = self.hparams.SpkNet(X_est, X_est_w)
-        est_mask = self.hparams.MaskNet(mix_w, C)
+        if self.hparams.use_pretrain_vec:
+            C_use = C_est
+        else:
+            C_use = C
+        est_mask = self.hparams.MaskNet(mix_w, C_use)
         _, N, L = mix_w.shape
+        if not self.hparams.copy_mix or self.hparams.mask_end:
+            mix_w = mix_w.unsqueeze(1).repeat(1, Spk, 1, 1)
+            mix_w = mix_w.flatten(0, 1)
         if isinstance(est_mask, list):
             est_source = []
             for est_m in est_mask:
@@ -196,6 +466,7 @@ class Separation(sb.Brain):
         ids,
         weight,
         kind,
+        pit,
         stage,
     ):
         """Computes the sinr loss"""
@@ -208,6 +479,7 @@ class Separation(sb.Brain):
             ids,
             weight,
             kind,
+            pit,
             stage,
         )
 
@@ -218,9 +490,14 @@ class Separation(sb.Brain):
         targets = [batch.s1_sig, batch.s2_sig]
         targets_e = [batch.s1_e_sig, batch.s2_e_sig]
         ids = [batch.s1_ID, batch.s2_ID]
+        vecs = [batch.s1_vec_sig, batch.s2_vec_sig]
+        vecs_e = [batch.s1_e_vec_sig, batch.s2_e_vec_sig]
 
         if self.hparams.num_spks == 3:
             targets.append(batch.s3_sig)
+            targets_e.append(batch.s3_e_sig)
+            vecs.append(batch.s3_vec_sig)
+            vecs_e.append(batch.s3_e_vec_sig)
 
         if self.hparams.auto_mix_prec:
             with autocast():
@@ -232,7 +509,7 @@ class Separation(sb.Brain):
                     pred_spks,
                     ids,
                 ) = self.compute_forward(
-                    mixture, targets, targets_e, ids, sb.Stage.TRAIN
+                    mixture, targets, targets_e, ids, vecs, vecs_e, sb.Stage.TRAIN
                 )
                 loss_total = self.compute_objectives(
                     predictions,
@@ -243,6 +520,7 @@ class Separation(sb.Brain):
                     ids,
                     self.hparams.loss_weight,
                     self.hparams.loss_kind,
+                    self.hparams.loss_pit,
                     "TRAIN",
                 )
 
@@ -291,7 +569,7 @@ class Separation(sb.Brain):
                 pred_spks,
                 ids,
             ) = self.compute_forward(
-                mixture, targets, targets_e, ids, sb.Stage.TRAIN
+                mixture, targets, targets_e, ids, vecs, vecs_e, sb.Stage.TRAIN
             )
             loss_total = self.compute_objectives(
                 predictions,
@@ -302,6 +580,7 @@ class Separation(sb.Brain):
                 ids,
                 self.hparams.loss_weight,
                 self.hparams.loss_kind,
+                self.hparams.loss_pit,
                 "TRAIN",
             )
 
@@ -364,6 +643,11 @@ class Separation(sb.Brain):
                 loss.data = torch.tensor(0).to(self.device)
         self.optimizer.zero_grad()
 
+        if isinstance(
+            self.hparams.lr_scheduler, schedulers.DPTScheduler
+        ):
+            current_lr, next_lr = self.hparams.lr_scheduler(self.optimizer)
+        
         if isinstance(loss_total, dict):
             for key in loss_total.keys():
                 loss_total[key] = loss_total[key].detach().cpu()
@@ -392,8 +676,13 @@ class Separation(sb.Brain):
         targets = [batch.s1_sig, batch.s2_sig]
         targets_e = [batch.s1_e_sig, batch.s2_e_sig]
         ids = [batch.s1_ID, batch.s2_ID]
+        vecs = [batch.s1_vec_sig, batch.s2_vec_sig]
+        vecs_e = [batch.s1_e_vec_sig, batch.s2_e_vec_sig]
         if self.hparams.num_spks == 3:
             targets.append(batch.s3_sig)
+            targets_e.append(batch.s3_e_sig)
+            vecs.append(batch.s3_vec_sig)
+            vecs_e.append(batch.s3_e_vec_sig)
 
         with torch.no_grad():
             (
@@ -403,7 +692,7 @@ class Separation(sb.Brain):
                 spec,
                 pred_spks,
                 ids,
-            ) = self.compute_forward(mixture, targets, targets_e, ids, stage)
+            ) = self.compute_forward(mixture, targets, targets_e, ids, vecs, vecs_e, stage)
             loss = self.compute_objectives(
                 predictions,
                 targets,
@@ -413,6 +702,7 @@ class Separation(sb.Brain):
                 ids,
                 1,
                 self.hparams.loss_kind,
+                self.hparams.loss_pit,
                 "TEST",
             )
             loss = loss.mean()
@@ -430,6 +720,14 @@ class Separation(sb.Brain):
     def on_stage_end(self, stage, stage_loss, epoch):
         """Gets called at the end of a epoch."""
         # Compute/store important stats
+        test_loss = None
+        train_loss = None
+        if isinstance(stage_loss, dict):
+            if 'train_loss' in stage_loss:
+                train_loss = stage_loss['train_loss']
+            if 'test_loss' in stage_loss:
+                test_loss = stage_loss['test_loss']
+            stage_loss = stage_loss['valid_loss']
         stage_stats = {"si-snr": stage_loss}
         if stage == sb.Stage.TRAIN:
             self.train_stats = {"loss": stage_loss}
@@ -449,6 +747,10 @@ class Separation(sb.Brain):
                 self.hparams.lr_scheduler, schedulers.NoamScheduler
             ):
                 current_lr, next_lr = self.hparams.lr_scheduler(self.optimizer)
+            elif isinstance(
+                self.hparams.lr_scheduler, schedulers.DPTScheduler
+            ):
+                current_lr, next_lr = self.hparams.lr_scheduler(self.optimizer, epoch=epoch)
             else:
                 # if we do not use the reducelronplateau, we do not change the lr
                 current_lr = self.hparams.optimizer.optim.param_groups[0]["lr"]
@@ -461,6 +763,13 @@ class Separation(sb.Brain):
             self.checkpointer.save_and_keep_only(
                 meta={"si-snr": stage_stats["si-snr"]}, min_keys=["si-snr"],
             )
+            
+            self.writer.add_scalar("valid_loss", stage_loss, epoch)
+            if test_loss is not None:
+                self.writer.add_scalar("test_loss", test_loss, epoch)
+            if train_loss is not None:
+                self.writer.add_scalar("train_eval_loss", train_loss, epoch)
+                
         elif stage == sb.Stage.TEST:
             self.hparams.train_logger.log_stats(
                 stats_meta={"Epoch loaded": self.hparams.epoch_counter.current},
@@ -565,11 +874,11 @@ class Separation(sb.Brain):
         ]
         return mixture, targets, targets_e
 
-    def rand_choice(self, mix, targets, targets_e, ids):
+    def rand_choice(self, mix, targets, targets_e, ids, vecs, vecs_e, stage):
         """
         This function randomly switches the s1 signal and s2 signal or estimated and source
         """
-        if np.random.choice([True, False], p=[0.5, 0.5]):
+        if np.random.choice([True, False], p=[0.5, 0.5]) and stage == sb.Stage.TRAIN:
             targets = torch.cat(
                 [targets[..., 1].unsqueeze(-1), targets[..., 0].unsqueeze(-1)],
                 dim=-1,
@@ -584,32 +893,57 @@ class Separation(sb.Brain):
             ids = torch.cat(
                 [ids[..., 1].unsqueeze(-1), ids[..., 0].unsqueeze(-1)], dim=-1,
             )
+            vecs = torch.cat(
+                [vecs[..., 1].unsqueeze(-1), vecs[..., 0].unsqueeze(-1)],
+                dim=-1,
+            )
+            vecs_e = torch.cat(
+                [
+                    vecs_e[..., 1].unsqueeze(-1),
+                    vecs_e[..., 0].unsqueeze(-1),
+                ],
+                dim=-1,
+            )
 
-            if np.random.choice(
-                [True, False],
-                p=[self.hparams.rand_ori_rate, 1 - self.hparams.rand_ori_rate],
-            ):
-                targets_e = torch.cat(
-                    [
-                        targets[..., 0].unsqueeze(-1),
-                        targets_e[..., 1].unsqueeze(-1),
-                    ],
-                    dim=-1,
-                )
+        if np.random.choice(
+            [True, False],
+            p=[self.hparams.rand_ori_rate, 1 - self.hparams.rand_ori_rate],
+        ):
+            targets_e = torch.cat(
+                [
+                    targets[..., 0].unsqueeze(-1),
+                    targets_e[..., 1].unsqueeze(-1),
+                ],
+                dim=-1,
+            )
+            vecs_e = torch.cat(
+                [
+                    vecs[..., 0].unsqueeze(-1),
+                    vecs_e[..., 1].unsqueeze(-1),
+                ],
+                dim=-1,
+            )
 
-            if np.random.choice(
-                [True, False],
-                p=[self.hparams.rand_ori_rate, 1 - self.hparams.rand_ori_rate],
-            ):
-                targets_e = torch.cat(
-                    [
-                        targets_e[..., 0].unsqueeze(-1),
-                        targets[..., 1].unsqueeze(-1),
-                    ],
-                    dim=-1,
-                )
+        if np.random.choice(
+            [True, False],
+            p=[self.hparams.rand_ori_rate, 1 - self.hparams.rand_ori_rate],
+        ):
+            targets_e = torch.cat(
+                [
+                    targets_e[..., 0].unsqueeze(-1),
+                    targets[..., 1].unsqueeze(-1),
+                ],
+                dim=-1,
+            )
+            vecs_e = torch.cat(
+                [
+                    vecs_e[..., 0].unsqueeze(-1),
+                    vecs[..., 1].unsqueeze(-1),
+                ],
+                dim=-1,
+            )
 
-        return mix, targets, targets_e, ids
+        return mix, targets, targets_e, ids, vecs, vecs_e
 
     def reset_layer_recursively(self, layer):
         """Reinitializes the parameters of the neural networks"""
@@ -654,8 +988,13 @@ class Separation(sb.Brain):
                     targets = [batch.s1_sig, batch.s2_sig]
                     targets_e = [batch.s1_e_sig, batch.s2_e_sig]
                     ids = [batch.s1_ID, batch.s2_ID]
+                    vecs = [batch.s1_vec_sig, batch.s2_vec_sig]
+                    vecs_e = [batch.s1_e_vec_sig, batch.s2_e_vec_sig]
                     if self.hparams.num_spks == 3:
                         targets.append(batch.s3_sig)
+                        targets_e.append(batch.s3_e_sig)
+                        vecs.append(batch.s3_vec_sig)
+                        vecs_e.append(batch.s3_e_vec_sig)
 
                     with torch.no_grad():
                         (
@@ -670,6 +1009,8 @@ class Separation(sb.Brain):
                             targets,
                             targets_e,
                             ids,
+                            vecs,
+                            vecs_e,
                             sb.Stage.TEST,
                         )
 
@@ -686,6 +1027,7 @@ class Separation(sb.Brain):
                         ids,
                         1.0,
                         self.hparams.loss_kind,
+                        self.hparams.loss_pit,
                         "TEST",
                     )
 
@@ -703,6 +1045,7 @@ class Separation(sb.Brain):
                         ids,
                         1.0,
                         self.hparams.loss_kind,
+                        self.hparams.loss_pit,
                         "TEST",
                     )
                     sisnr_i = sisnr - sisnr_baseline
@@ -843,6 +1186,20 @@ def dataio_prep(hparams):
     def id_pipeline_s2(s2_id):
         s2_ID = int(s2_id)
         return s2_ID
+    
+    @sb.utils.data_pipeline.takes("s1_vector")
+    @sb.utils.data_pipeline.provides("s1_vec_sig")
+    def audio_pipeline_s1_vec(s1_vec):
+        s1_vec_sig = np.load(s1_vec)
+        s1_vec_sig = torch.from_numpy(s1_vec_sig)
+        return s1_vec_sig
+    
+    @sb.utils.data_pipeline.takes("s2_vector")
+    @sb.utils.data_pipeline.provides("s2_vec_sig")
+    def audio_pipeline_s2_vec(s2_vec):
+        s2_vec_sig = np.load(s2_vec)
+        s2_vec_sig = torch.from_numpy(s2_vec_sig)
+        return s2_vec_sig
 
     @sb.utils.data_pipeline.takes("s1_e_wav")
     @sb.utils.data_pipeline.provides("s1_e_sig")
@@ -855,6 +1212,20 @@ def dataio_prep(hparams):
     def audio_pipeline_s2_e(s2_e_wav):
         s2_e_sig = sb.dataio.dataio.read_audio(s2_e_wav)
         return s2_e_sig
+    
+    @sb.utils.data_pipeline.takes("s1_e_vector")
+    @sb.utils.data_pipeline.provides("s1_e_vec_sig")
+    def audio_pipeline_s1_e_vec(s1_e_vec):
+        s1_e_vec_sig = np.load(s1_e_vec)
+        s1_e_vec_sig = torch.from_numpy(s1_e_vec_sig)
+        return s1_e_vec_sig
+    
+    @sb.utils.data_pipeline.takes("s2_e_vector")
+    @sb.utils.data_pipeline.provides("s2_e_vec_sig")
+    def audio_pipeline_s2_e_vec(s2_e_vec):
+        s2_e_vec_sig = np.load(s2_e_vec)
+        s2_e_vec_sig = torch.from_numpy(s2_e_vec_sig)
+        return s2_e_vec_sig
 
     if hparams["num_spks"] == 3:
 
@@ -863,6 +1234,32 @@ def dataio_prep(hparams):
         def audio_pipeline_s3(s3_wav):
             s3_sig = sb.dataio.dataio.read_audio(s3_wav)
             return s3_sig
+        
+        @sb.utils.data_pipeline.takes("s3_vector")
+        @sb.utils.data_pipeline.provides("s3_vec_sig")
+        def audio_pipeline_s3_vec(s3_vec):
+            s3_vec_sig = np.load(s3_vec)
+            s3_vec_sig = torch.from_numpy(s3_vec_sig)
+            return s3_vec_sig
+        
+        @sb.utils.data_pipeline.takes("s3_e_wav")
+        @sb.utils.data_pipeline.provides("s3_e_sig")
+        def audio_pipeline_s3_e(s3_e_wav):
+            s3_e_sig = sb.dataio.dataio.read_audio(s3_e_wav)
+            return s3_e_sig
+        
+        @sb.utils.data_pipeline.takes("s3_e_vector")
+        @sb.utils.data_pipeline.provides("s3_e_vec_sig")
+        def audio_pipeline_s3_e_vec(s3_e_vec):
+            s3_e_vec_sig = np.load(s3_e_vec)
+            s3_e_vec_sig = torch.from_numpy(s3_e_vec_sig)
+            return s3_e_vec_sig
+        
+        @sb.utils.data_pipeline.takes("s3_id")
+        @sb.utils.data_pipeline.provides("s3_ID")
+        def id_pipeline_s3(s3_id):
+            s3_ID = int(s3_id)
+            return s3_ID
 
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_mix)
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s1)
@@ -871,10 +1268,36 @@ def dataio_prep(hparams):
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s2_e)
     sb.dataio.dataset.add_dynamic_item(datasets, id_pipeline_s1)
     sb.dataio.dataset.add_dynamic_item(datasets, id_pipeline_s2)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s1_vec)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s2_vec)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s1_e_vec)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s2_e_vec)
     if hparams["num_spks"] == 3:
         sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s3)
+        sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s3_e)
+        sb.dataio.dataset.add_dynamic_item(datasets, id_pipeline_s3)
+        sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s3_vec)
+        sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s3_e_vec)
         sb.dataio.dataset.set_output_keys(
-            datasets, ["id", "mix_sig", "s1_sig", "s2_sig", "s3_sig"]
+            datasets,   [
+                            "id", 
+                            "mix_sig", 
+                            "s1_sig", 
+                            "s2_sig", 
+                            "s3_sig", 
+                            "s1_e_sig", 
+                            "s2_e_sig", 
+                            "s3_e_sig", 
+                            "s1_ID", 
+                            "s2_ID", 
+                            "s3_ID",
+                            "s1_vec_sig",
+                            "s2_vec_sig",
+                            "s3_vec_sig",
+                            "s1_e_vec_sig",
+                            "s2_e_vec_sig",
+                            "s3_e_vec_sig",
+                        ]
         )
     else:
         sb.dataio.dataset.set_output_keys(
@@ -888,6 +1311,10 @@ def dataio_prep(hparams):
                 "s2_e_sig",
                 "s1_ID",
                 "s2_ID",
+                "s1_vec_sig",
+                "s2_vec_sig",
+                "s1_e_vec_sig",
+                "s2_e_vec_sig",
             ],
         )
 
@@ -931,6 +1358,8 @@ if __name__ == "__main__":
         prepare_wsjmix,
         kwargs={
             "datapath": hparams["data_folder"],
+            "dvecpath": hparams["dvector_folder"],
+            "csvpath": hparams["csv_folder"],
             "savepath": hparams["save_folder"],
             "n_spks": hparams["num_spks"],
             "skip_prep": hparams["skip_prep"],
@@ -994,10 +1423,11 @@ if __name__ == "__main__":
         hparams=hparams,
         run_opts=run_opts,
         checkpointer=hparams["checkpointer"],
+        writer=hparams["output_folder"],
     )
 
     # re-initialize the parameters if we don't use a pretrained model
-    if "pretrained_separator" not in hparams:
+    if "pretrained_separator" not in hparams and not hparams["init_weight"]:
         for module in separator.modules.values():
             separator.reset_layer_recursively(module)
 
@@ -1007,6 +1437,7 @@ if __name__ == "__main__":
             separator.hparams.epoch_counter,
             train_data,
             valid_data,
+            test_data,
             train_loader_kwargs=hparams["dataloader_opts"],
             valid_loader_kwargs=hparams["dataloader_opts"],
         )

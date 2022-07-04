@@ -154,6 +154,8 @@ spk_id_dict = {
 
 def prepare_wsjmix(
     datapath,
+    dvecpath,
+    csvpath,
     savepath,
     n_spks=2,
     skip_prep=False,
@@ -175,28 +177,33 @@ def prepare_wsjmix(
     if skip_prep:
         return
 
-    if "wsj" in datapath:
-
-        if n_spks == 2:
-            assert (
-                "2speakers" in datapath
-            ), "Inconsistent number of speakers and datapath"
-            create_wsj_csv(datapath, savepath)
-        elif n_spks == 3:
-            assert (
-                "3speakers" in datapath
-            ), "Inconsistent number of speakers and datapath"
-            create_wsj_csv_3spks(datapath, savepath)
-        else:
-            raise ValueError("Unsupported Number of Speakers")
-
-    if "DPFN" in datapath:
-
-        create_dpfn_csv(datapath, savepath)
-
+    if csvpath is not None:
+        
+        create_dpfn_sb_csv(datapath, dvecpath, csvpath, savepath)
+    
+    elif dvecpath is not None:
+        
+        create_dpfn_csv(datapath, dvecpath, savepath)
+    
     else:
-        print("Creating a csv file for a custom dataset")
-        create_custom_dataset(datapath, savepath)
+        if "wsj" in datapath:
+
+            if n_spks == 2:
+                assert (
+                    "2speakers" in datapath
+                ), "Inconsistent number of speakers and datapath"
+                create_wsj_csv(datapath, savepath)
+            elif n_spks == 3:
+                assert (
+                    "3speakers" in datapath
+                ), "Inconsistent number of speakers and datapath"
+                create_wsj_csv_3spks(datapath, savepath)
+            else:
+                raise ValueError("Unsupported Number of Speakers")    
+
+        else:
+            print("Creating a csv file for a custom dataset")
+            create_custom_dataset(datapath, savepath)
 
 
 def create_custom_dataset(
@@ -387,7 +394,7 @@ def create_wsj_csv_3spks(datapath, savepath):
                 writer.writerow(row)
 
 
-def create_dpfn_csv(datapath, savepath):
+def create_dpfn_csv(datapath, vectorpath, savepath):
     """
     This function creates the csv files to get the speechbrain data loaders for the wsj0-2mix dataset.
 
@@ -419,6 +426,24 @@ def create_dpfn_csv(datapath, savepath):
         metrics_paths = [
             os.path.join(ex_path, ex_dir, "metrics.json") for ex_dir in ex_dirs
         ]
+        
+        ex_path = os.path.join(vectorpath, "examples_" + set_type)
+        ex_dirs = sorted(os.listdir(ex_path))
+        
+        s1_vec_paths = [
+            os.path.join(ex_path, ex_dir, "s1.npy") for ex_dir in ex_dirs
+        ]
+        s2_vec_paths = [
+            os.path.join(ex_path, ex_dir, "s2.npy") for ex_dir in ex_dirs
+        ]
+        s1_e_vec_paths = [
+            os.path.join(ex_path, ex_dir, "s1_estimate.npy")
+            for ex_dir in ex_dirs
+        ]
+        s2_e_vec_paths = [
+            os.path.join(ex_path, ex_dir, "s2_estimate.npy")
+            for ex_dir in ex_dirs
+        ]
 
         csv_columns = [
             "ID",
@@ -429,17 +454,21 @@ def create_dpfn_csv(datapath, savepath):
             "s1_wav",
             "s1_wav_format",
             "s1_wav_opts",
+            "s1_vector",
             "s1_id",
             "s2_wav",
             "s2_wav_format",
             "s2_wav_opts",
+            "s2_vector",
             "s2_id",
             "s1_e_wav",
             "s1_e_wav_format",
             "s1_e_wav_opts",
+            "s1_e_vector",
             "s2_e_wav",
             "s2_e_wav_format",
             "s2_e_wav_opts",
+            "s2_e_vector",
         ]
 
         with open(savepath + "/wsj_" + set_type + ".csv", "w") as csvfile:
@@ -454,6 +483,10 @@ def create_dpfn_csv(datapath, savepath):
                     s1_e_path,
                     s2_e_path,
                     metrics_path,
+                    s1_vec_path,
+                    s2_vec_path,
+                    s1_e_vec_path,
+                    s2_e_vec_path,
                 ),
             ) in enumerate(
                 zip(
@@ -463,6 +496,10 @@ def create_dpfn_csv(datapath, savepath):
                     s1_e_fl_paths,
                     s2_e_fl_paths,
                     metrics_paths,
+                    s1_vec_paths,
+                    s2_vec_paths,
+                    s1_e_vec_paths,
+                    s2_e_vec_paths
                 )
             ):
                 metrics = json.load(open(metrics_path))
@@ -480,16 +517,179 @@ def create_dpfn_csv(datapath, savepath):
                     "s1_wav": s1_path,
                     "s1_wav_format": "wav",
                     "s1_wav_opts": None,
+                    "s1_vector": s1_vec_path,
                     "s1_id": spk_id_dict[spk1],
                     "s2_wav": s2_path,
                     "s2_wav_format": "wav",
                     "s2_wav_opts": None,
+                    "s2_vector": s2_vec_path,
                     "s2_id": spk_id_dict[spk2],
                     "s1_e_wav": s1_e_path,
                     "s1_e_wav_format": "wav",
                     "s1_e_wav_opts": None,
+                    "s1_e_vector": s1_e_vec_path,
                     "s2_e_wav": s2_e_path,
                     "s2_e_wav_format": "wav",
                     "s2_e_wav_opts": None,
+                    "s2_e_vector": s2_e_vec_path,
+                }
+                writer.writerow(row)
+
+def create_dpfn_sb_csv(datapath, vectorpath, csvpath, savepath):
+    """
+    This function creates the csv files to get the speechbrain data loaders for the wsj0-2mix dataset.
+
+    Arguments:
+        datapath (str) : path for the wsj0-mix dataset.
+        savepath (str) : path where we save the csv file
+    """
+    for set_type in ["tr", "cv", "tt"]:
+        ex_path = os.path.join(datapath, "examples_" + set_type)
+        
+        if 'small' in datapath:
+            if set_type == 'tr':
+                ex_len = 2000
+            elif set_type == 'cv':
+                ex_len = 500
+            else:
+                ex_len = 300
+        else:
+            if set_type == 'tr':
+                ex_len = 20000
+            elif set_type == 'cv':
+                ex_len = 5000
+            else:
+                ex_len = 3000
+
+        mix_fl_paths = [
+            os.path.join(ex_path, f"item{id}_mix.wav") for id in range(ex_len)
+        ]
+        s1_fl_paths = [
+            os.path.join(ex_path, f"item{id}_source1.wav") for id in range(ex_len)
+        ]
+        s2_fl_paths = [
+            os.path.join(ex_path, f"item{id}_source2.wav") for id in range(ex_len)
+        ]
+        s1_e_fl_paths = [
+            os.path.join(ex_path, f"item{id}_source1hat.wav")
+            for id in range(ex_len)
+        ]
+        s2_e_fl_paths = [
+            os.path.join(ex_path, f"item{id}_source2hat.wav")
+            for id in range(ex_len)
+        ]
+        
+        csv_file = os.path.join(csvpath, f'whamorg_{set_type}.csv')
+        csv_rows = []
+        with open(csv_file, 'r') as file:
+            csvreader = csv.reader(file)
+            header = next(csvreader)
+            for row in csvreader:
+                csv_rows.append(row)
+        
+        ex_path = os.path.join(vectorpath, "examples_" + set_type)
+        ex_dirs = sorted(os.listdir(ex_path))
+        
+        s1_vec_paths = [
+            os.path.join(ex_path, ex_dir, "s1.npy") for ex_dir in ex_dirs
+        ]
+        s2_vec_paths = [
+            os.path.join(ex_path, ex_dir, "s2.npy") for ex_dir in ex_dirs
+        ]
+        s1_e_vec_paths = [
+            os.path.join(ex_path, ex_dir, "s1_estimate.npy")
+            for ex_dir in ex_dirs
+        ]
+        s2_e_vec_paths = [
+            os.path.join(ex_path, ex_dir, "s2_estimate.npy")
+            for ex_dir in ex_dirs
+        ]
+
+        csv_columns = [
+            "ID",
+            "duration",
+            "mix_wav",
+            "mix_wav_format",
+            "mix_wav_opts",
+            "s1_wav",
+            "s1_wav_format",
+            "s1_wav_opts",
+            "s1_vector",
+            "s1_id",
+            "s2_wav",
+            "s2_wav_format",
+            "s2_wav_opts",
+            "s2_vector",
+            "s2_id",
+            "s1_e_wav",
+            "s1_e_wav_format",
+            "s1_e_wav_opts",
+            "s1_e_vector",
+            "s2_e_wav",
+            "s2_e_wav_format",
+            "s2_e_wav_opts",
+            "s2_e_vector",
+        ]
+
+        with open(savepath + "/wsj_" + set_type + ".csv", "w") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
+            writer.writeheader()
+            for (
+                i,
+                (
+                    mix_path,
+                    s1_path,
+                    s2_path,
+                    s1_e_path,
+                    s2_e_path,
+                    csv_row,
+                    s1_vec_path,
+                    s2_vec_path,
+                    s1_e_vec_path,
+                    s2_e_vec_path,
+                ),
+            ) in enumerate(
+                zip(
+                    mix_fl_paths,
+                    s1_fl_paths,
+                    s2_fl_paths,
+                    s1_e_fl_paths,
+                    s2_e_fl_paths,
+                    csv_rows,
+                    s1_vec_paths,
+                    s2_vec_paths,
+                    s1_e_vec_paths,
+                    s2_e_vec_paths
+                )
+            ):
+                mix_wav = csv_row[2]
+                mix_wav_name = mix_wav.split("/")[-1]
+                mix_details = mix_wav_name.split("_")
+                spk1 = mix_details[0][:3]
+                spk2 = mix_details[2][:3]
+                row = {
+                    "ID": i,
+                    "duration": 1.0,
+                    "mix_wav": mix_path,
+                    "mix_wav_format": "wav",
+                    "mix_wav_opts": None,
+                    "s1_wav": s1_path,
+                    "s1_wav_format": "wav",
+                    "s1_wav_opts": None,
+                    "s1_vector": s1_vec_path,
+                    "s1_id": spk_id_dict[spk1],
+                    "s2_wav": s2_path,
+                    "s2_wav_format": "wav",
+                    "s2_wav_opts": None,
+                    "s2_vector": s2_vec_path,
+                    "s2_id": spk_id_dict[spk2],
+                    "s1_e_wav": s1_e_path,
+                    "s1_e_wav_format": "wav",
+                    "s1_e_wav_opts": None,
+                    "s1_e_vector": s1_e_vec_path,
+                    "s2_e_wav": s2_e_path,
+                    "s2_e_wav_format": "wav",
+                    "s2_e_wav_opts": None,
+                    "s2_e_vector": s2_e_vec_path,
                 }
                 writer.writerow(row)
