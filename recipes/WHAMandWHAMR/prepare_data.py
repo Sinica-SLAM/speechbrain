@@ -25,7 +25,7 @@ def prepare_wham_whamr_csv(
     if skip_prep:
         return
 
-    if "wham_original" in datapath:
+    if "wham_original" in datapath or "wsj0" in datapath:
         # if we want to train a model on the original wham dataset
         create_wham_whamr_csv(
             datapath, savepath, fs, savename="whamorg_", add_reverb=False

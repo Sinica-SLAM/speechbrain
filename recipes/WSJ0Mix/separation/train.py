@@ -29,16 +29,222 @@ import torchaudio
 import speechbrain as sb
 import speechbrain.nnet.schedulers as schedulers
 from speechbrain.utils.distributed import run_on_main
+from speechbrain.dataio.dataloader import LoopedLoader
 from torch.cuda.amp import autocast
+from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader
 from hyperpyyaml import load_hyperpyyaml
 import numpy as np
 from tqdm import tqdm
+from enum import Enum, auto
 import csv
 import logging
+import time
+
+class Stage(Enum):
+    """Simple enum to track stage of experiments."""
+
+    TRAIN = auto()
+    VALID = auto()
+    TEST = auto()
 
 
 # Define training procedure
 class Separation(sb.Brain):
+    def __init__(self, 
+            modules=None,
+            opt_class=None,
+            hparams=None,
+            run_opts=None,
+            checkpointer=None,
+            writer=None,
+        ):
+        super().__init__(modules, opt_class, hparams, run_opts, checkpointer,)
+        if writer is not None:
+            self.writer = SummaryWriter(writer)
+        else:
+            self.writer = SummaryWriter(hparams["output_folder"])
+    
+    def fit(
+        self,
+        epoch_counter,
+        train_set,
+        valid_set=None,
+        test_set=None,
+        progressbar=None,
+        train_loader_kwargs={},
+        valid_loader_kwargs={},
+    ):
+        """Iterate epochs and datasets to improve objective.
+
+        Relies on the existence of multiple functions that can (or should) be
+        overridden. The following methods are used and expected to have a
+        certain behavior:
+
+        * ``fit_batch()``
+        * ``evaluate_batch()``
+        * ``update_average()``
+
+        If the initialization was done with distributed_count > 0 and the
+        distributed_backend is ddp, this will generally handle multiprocess
+        logic, like splitting the training data into subsets for each device and
+        only saving a checkpoint on the main process.
+
+        Arguments
+        ---------
+        epoch_counter : iterable
+            Each call should return an integer indicating the epoch count.
+        train_set : Dataset, DataLoader
+            A set of data to use for training. If a Dataset is given, a
+            DataLoader is automatically created. If a DataLoader is given, it is
+            used directly.
+        valid_set : Dataset, DataLoader
+            A set of data to use for validation. If a Dataset is given, a
+            DataLoader is automatically created. If a DataLoader is given, it is
+            used directly.
+        train_loader_kwargs : dict
+            Kwargs passed to `make_dataloader()` for making the train_loader
+            (if train_set is a Dataset, not DataLoader).
+            E.G. batch_size, num_workers.
+            DataLoader kwargs are all valid.
+        valid_loader_kwargs : dict
+            Kwargs passed to `make_dataloader()` for making the valid_loader
+            (if valid_set is a Dataset, not DataLoader).
+            E.g., batch_size, num_workers.
+            DataLoader kwargs are all valid.
+        progressbar : bool
+            Whether to display the progress of each epoch in a progressbar.
+        """
+
+        if not (
+            isinstance(train_set, DataLoader)
+            or isinstance(train_set, LoopedLoader)
+        ):
+            train_set = self.make_dataloader(
+                train_set, stage=sb.Stage.TRAIN, **train_loader_kwargs
+            )
+        if valid_set is not None and not (
+            isinstance(valid_set, DataLoader)
+            or isinstance(valid_set, LoopedLoader)
+        ):
+            valid_set = self.make_dataloader(
+                valid_set,
+                stage=sb.Stage.VALID,
+                ckpt_prefix=None,
+                **valid_loader_kwargs,
+            )
+        if test_set is not None and not (
+            isinstance(test_set, DataLoader)
+            or isinstance(test_set, LoopedLoader)
+        ):
+            test_set = self.make_dataloader(
+                test_set,
+                stage=sb.Stage.VALID,
+                ckpt_prefix=None,
+                **valid_loader_kwargs,
+            )
+
+        self.on_fit_start()
+
+        if progressbar is None:
+            progressbar = not self.noprogressbar
+
+        # Iterate epochs
+        for epoch in epoch_counter:
+
+            # Training stage
+            self.on_stage_start(sb.Stage.TRAIN, epoch)
+            self.modules.train()
+
+            # Reset nonfinite count to 0 each epoch
+            self.nonfinite_count = 0
+
+            if self.train_sampler is not None and hasattr(
+                self.train_sampler, "set_epoch"
+            ):
+                self.train_sampler.set_epoch(epoch)
+
+            # Time since last intra-epoch checkpoint
+            last_ckpt_time = time.time()
+
+            # Only show progressbar if requested and main_process
+            enable = progressbar and sb.utils.distributed.if_main_process()
+            with tqdm(
+                train_set,
+                initial=self.step,
+                dynamic_ncols=True,
+                disable=not enable,
+            ) as t:
+                for batch in t:
+                    self.step += 1
+                    loss = self.fit_batch(batch)
+                    self.writer.add_scalar("train_loss", loss, self.step + (epoch-1) * len(t))
+                    self.avg_train_loss = self.update_average(
+                        loss, self.avg_train_loss
+                    )
+                    t.set_postfix(train_loss=self.avg_train_loss)
+
+                    # Debug mode only runs a few batches
+                    if self.debug and self.step == self.debug_batches:
+                        break
+
+                    if (
+                        self.checkpointer is not None
+                        and self.ckpt_interval_minutes > 0
+                        and time.time() - last_ckpt_time
+                        >= self.ckpt_interval_minutes * 60.0
+                    ):
+                        run_on_main(self._save_intra_epoch_ckpt)
+                        last_ckpt_time = time.time()
+
+            # Run train "on_stage_end" on all processes
+            self.on_stage_end(sb.Stage.TRAIN, self.avg_train_loss, epoch)
+            self.avg_train_loss = 0.0
+            self.step = 0
+
+            # Validation stage
+            if valid_set is not None:
+                self.on_stage_start(sb.Stage.VALID, epoch)
+                self.modules.eval()
+                avg_valid_loss = 0.0
+                avg_test_loss = 0.0
+                with torch.no_grad():
+                    for batch in tqdm(
+                        valid_set, dynamic_ncols=True, disable=not enable
+                    ):
+                        self.step += 1
+                        loss = self.evaluate_batch(batch, stage=sb.Stage.VALID)
+                        avg_valid_loss = self.update_average(
+                            loss, avg_valid_loss
+                        )
+
+                        # Debug mode only runs a few batches
+                        if self.debug and self.step == self.debug_batches:
+                            break
+
+                    if test_set is not None:
+                        self.step = 0
+                        for batch in tqdm(
+                            test_set, dynamic_ncols=True, disable=not enable
+                        ):
+                            self.step += 1
+                            loss = self.evaluate_batch(batch, stage=sb.Stage.VALID)
+                            avg_test_loss = self.update_average(
+                                loss, avg_test_loss
+                            )
+                        avg_valid_loss = [avg_valid_loss, avg_test_loss]
+                    
+                    # Only run validation "on_stage_end" on main process
+                    self.step = 0
+                    run_on_main(
+                        self.on_stage_end,
+                        args=[sb.Stage.VALID, avg_valid_loss, epoch],
+                    )
+
+            # Debug mode only runs a few epochs
+            if self.debug and epoch == self.debug_epochs:
+                break
+    
     def compute_forward(self, mix, targets, stage, noise=None):
         """Forward computations from the mixture to the separated signals."""
 
@@ -172,6 +378,11 @@ class Separation(sb.Brain):
                 loss.data = torch.tensor(0).to(self.device)
         self.optimizer.zero_grad()
 
+        if isinstance(
+            self.hparams.lr_scheduler, schedulers.DPTScheduler
+        ):
+            current_lr, next_lr = self.hparams.lr_scheduler(self.optimizer)
+        
         return loss.detach().cpu()
 
     def evaluate_batch(self, batch, stage):
@@ -185,6 +396,7 @@ class Separation(sb.Brain):
         with torch.no_grad():
             predictions, targets = self.compute_forward(mixture, targets, stage)
             loss = self.compute_objectives(predictions, targets)
+            loss = loss.mean()
 
         # Manage audio file saving
         if stage == sb.Stage.TEST and self.hparams.save_audio:
@@ -200,6 +412,10 @@ class Separation(sb.Brain):
     def on_stage_end(self, stage, stage_loss, epoch):
         """Gets called at the end of a epoch."""
         # Compute/store important stats
+        test_loss = None
+        if isinstance(stage_loss, list):
+            test_loss = stage_loss[1]
+            stage_loss = stage_loss[0]
         stage_stats = {"si-snr": stage_loss}
         if stage == sb.Stage.TRAIN:
             self.train_stats = stage_stats
@@ -215,6 +431,10 @@ class Separation(sb.Brain):
                     [self.optimizer], epoch, stage_loss
                 )
                 schedulers.update_learning_rate(self.optimizer, next_lr)
+            elif isinstance(
+                self.hparams.lr_scheduler, schedulers.DPTScheduler
+            ):
+                current_lr, next_lr = self.hparams.lr_scheduler(self.optimizer, epoch=epoch)
             else:
                 # if we do not use the reducelronplateau, we do not change the lr
                 current_lr = self.hparams.optimizer.optim.param_groups[0]["lr"]
@@ -227,6 +447,11 @@ class Separation(sb.Brain):
             self.checkpointer.save_and_keep_only(
                 meta={"si-snr": stage_stats["si-snr"]}, min_keys=["si-snr"],
             )
+            
+            self.writer.add_scalar("valid_loss", stage_loss, epoch)
+            if test_loss is not None:
+                self.writer.add_scalar("test_loss", test_loss, epoch)
+            
         elif stage == sb.Stage.TEST:
             self.hparams.train_logger.log_stats(
                 stats_meta={"Epoch loaded": self.hparams.epoch_counter.current},
@@ -325,7 +550,7 @@ class Separation(sb.Brain):
         csv_columns = ["snt_id", "sdr", "sdr_i", "si-snr", "si-snr_i"]
 
         test_loader = sb.dataio.dataloader.make_dataloader(
-            test_data, **self.hparams.dataloader_opts
+            test_data, **self.hparams.testloader_opts
         )
 
         with open(save_file, "w") as results_csv:
@@ -608,7 +833,15 @@ if __name__ == "__main__":
         hparams=hparams,
         run_opts=run_opts,
         checkpointer=hparams["checkpointer"],
+        writer=hparams["output_folder"],
     )
+    
+    original_stdout = sys.stdout # Save a reference to the original standard output
+
+    with open(os.path.join(hparams["output_folder"],'model.txt'), 'w') as f:
+        sys.stdout = f # Change the standard output to the file we created.
+        print(separator.modules)
+        sys.stdout = original_stdout # Reset the standard output to its original value
 
     # re-initialize the parameters if we don't use a pretrained model
     if "pretrained_separator" not in hparams:
@@ -621,6 +854,7 @@ if __name__ == "__main__":
             separator.hparams.epoch_counter,
             train_data,
             valid_data,
+            test_data,
             train_loader_kwargs=hparams["dataloader_opts"],
             valid_loader_kwargs=hparams["dataloader_opts"],
         )
