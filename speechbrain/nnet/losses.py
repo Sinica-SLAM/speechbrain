@@ -1098,7 +1098,7 @@ def nll_loss_kd(
 
 
 def dpfn_loss(
-    targets, predictions, pred_spec, spec, pred_spks, ids, weight, kind, stage
+    targets, predictions, pred_spec, spec, pred_spks, ids, weight, kind, pit, stage
 ):
     """
     Arguments
@@ -1111,25 +1111,35 @@ def dpfn_loss(
     loss: [B]
     """
     B, _, spk = targets.shape
-    targets = targets.permute(1, 0, 2).contiguous()
+    if not pit:
+        targets = targets.permute(1, 0, 2).contiguous()
     if isinstance(predictions, list):
         if stage == "TRAIN":
-            si_snr = torch.zeros(targets.shape[1], device="cuda")
+            si_snr = torch.zeros(B, device="cuda")
             for prediction in predictions:
-                prediction = prediction.permute(1, 0, 2).contiguous()
-                _si_snr = cal_si_snr(targets, prediction).squeeze(0)
-                _si_snr = torch.mean(_si_snr, -1)
+                if not pit:
+                    prediction = prediction.permute(1, 0, 2).contiguous()
+                    _si_snr = cal_si_snr(targets, prediction).squeeze(0)
+                    _si_snr = torch.mean(_si_snr, -1)
+                else:
+                    _si_snr = get_si_snr_with_pitwrapper(targets, prediction)
                 si_snr += _si_snr
             si_snr /= len(predictions)
         else:
             prediction = predictions[-1]
-            prediction = prediction.permute(1, 0, 2).contiguous()
-            si_snr = cal_si_snr(targets, prediction).squeeze(0)
-            si_snr = torch.mean(si_snr, -1)
+            if not pit:
+                prediction = prediction.permute(1, 0, 2).contiguous()
+                si_snr = cal_si_snr(targets, prediction).squeeze(0)
+                si_snr = torch.mean(si_snr, -1)
+            else:
+                si_snr = get_si_snr_with_pitwrapper(targets, prediction)
     else:
-        predictions = predictions.permute(1, 0, 2).contiguous()
-        si_snr = cal_si_snr(targets, predictions).squeeze(0)
-        si_snr = torch.mean(si_snr, -1)
+        if not pit:
+            predictions = predictions.permute(1, 0, 2).contiguous()
+            si_snr = cal_si_snr(targets, predictions).squeeze(0)
+            si_snr = torch.mean(si_snr, -1)
+        else:
+            si_snr = get_si_snr_with_pitwrapper(targets, predictions)
 
     if weight > 0 and stage == "TRAIN":
         if kind == "l1":
@@ -1157,3 +1167,13 @@ def dpfn_loss(
         return {"si_snr": si_snr, "spk_loss": spk_loss}
     else:
         return si_snr
+
+
+def asymmetric_loss(prediction, target, penalty):
+    gt = (target > prediction).float()
+    weight = gt * (penalty - 1) + 1
+    loss = (prediction - target) * weight
+    loss = torch.square(loss)
+    loss = torch.mean(loss, -1)
+    loss = torch.mean(loss, -1)
+    return loss
