@@ -17,7 +17,7 @@ After training the speaker embeddings, it is possible to perform speaker verific
 `python speaker_verification_plda.py hparams/verification_plda_xvector.yaml`
 
 If you didn't train the speaker embedding before, we automatically download the xvector model from the web.
-This system achieves an EER = 3.2% on voxceleb1 + voxceleb2.
+This system achieves an EER = 3.19% on voxceleb1 + voxceleb2.
 These results are all obtained with the official verification split of voxceleb1 (veri\_split.txt)
 
 
@@ -33,7 +33,10 @@ After training the speaker embeddings, it is possible to perform speaker verific
 
 `python speaker_verification_cosine.py hparams/verification_ecapa.yaml`
 
-This system achieves an EER = 0.69 % on voxceleb1 + voxceleb2.
+This system achieves:
+- EER = 0.80% (voxceleb1 + voxceleb2) with s-norm.
+- EER = 0.90% (voxceleb1 + voxceleb2) without s-norm
+
 These results are all obtained with the official verification split of voxceleb1 (veri\_split.txt)
 
 # VoxCeleb2 preparation
@@ -75,7 +78,8 @@ Note: To prepare the voxceleb1 + voxceleb2 dataset you have to copy and unpack v
 
 
 # PreTrained Model + Easy-Inference
-You can find the pre-trained model with an easy-inference function on [HuggingFace](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb).
+You can find the pre-trained ECAPA-TDNN model with an easy-inference function on [HuggingFace](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb).
+You can find the pre-trained xvector models as well on [HuggingFace](https://huggingface.co/speechbrain/spkrec-xvect-voxceleb)
 
 # **About SpeechBrain**
 - Website: https://speechbrain.github.io/
