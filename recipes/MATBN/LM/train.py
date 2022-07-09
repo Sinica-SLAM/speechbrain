@@ -96,7 +96,7 @@ def dataio_prepare(hparams):
 
     data_folder = hparams["data_folder"]
     datasets = {}
-    for dataset_name in ["train", "dev", "test"]:
+    for dataset_name in ["train", "valid", "test"]:
         json_path = f"{data_folder}/{dataset_name}.json"
         datasets[dataset_name] = dataset.DynamicItemDataset.from_json(
             json_path=json_path,
@@ -137,7 +137,7 @@ if __name__ == "__main__":
     lm_brain.fit(
         lm_brain.hparams.epoch_counter,
         datasets["train"],
-        datasets["dev"],
+        datasets["valid"],
         train_loader_kwargs=hparams["train_dataloader_opts"],
         valid_loader_kwargs=hparams["valid_dataloader_opts"],
     )

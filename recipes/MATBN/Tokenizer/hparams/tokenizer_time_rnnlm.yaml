@@ -1,0 +1,40 @@
+dataset_folder: !PLACEHOLDER
+prepare_folder: results/prepare_matbn_10
+output_folder: results/tokenizer_time_rnnlm
+keep_unk: False
+skip_prepare: False
+
+cna: True
+cna_dataset_folder: !PLACEHOLDER
+cna_prepare_folder: results/prepare_cna
+cna_settings_json_path: !ref <cna_dataset_folder>/settings.json
+cna_before_2000: False
+cna_skip_prepare: False
+
+token_type: char # ["unigram", "bpe", "char"]
+token_output: 8000 # index(blank/eos/bos/unk) = 0
+character_coverage: 1.0
+annotation_read: transcription
+
+train_json: !ref <prepare_folder>/train.json
+dev_json: !ref <prepare_folder>/dev.json
+eval_json: !ref <prepare_folder>/eval.json
+test_json: !ref <prepare_folder>/test.json
+
+cna_train_json: !ref <cna_prepare_folder>/train.json
+cna_valid_json: !ref <cna_prepare_folder>/valid.json
+cna_test_json: !ref <cna_prepare_folder>/test.json
+all_train_json: !PLACEHOLDER
+
+tokenizer: !name:speechbrain.tokenizers.SentencePiece.SentencePiece
+  model_dir: !ref <output_folder>
+  vocab_size: !ref <token_output>
+  annotation_train: !ref <all_train_json>
+  annotation_read: !ref <annotation_read>
+  model_type: !ref <token_type> # ["unigram", "bpe", "char"]
+  character_coverage: !ref <character_coverage>
+
+  annotation_list_to_check: [!ref <eval_json>, !ref <test_json>, !ref <cna_valid_json>, !ref <cna_test_json>]
+  annotation_format: json
+  bos_id: 1
+  eos_id: 2
