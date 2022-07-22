@@ -1157,3 +1157,18 @@ def dpfn_loss(
         return {"si_snr": si_snr, "spk_loss": spk_loss}
     else:
         return si_snr
+
+
+def channel_adapt_loss(targets, predictions, loss_kind):
+    channel_loss = []
+    for i in range(len(targets)):
+        target = targets[i]
+        prediction = predictions[i]
+        if loss_kind == "snr":
+            loss = get_si_snr_with_pitwrapper(target, prediction)
+        else:
+            raise NotImplementedError(
+                f"We only implemented channel adapt loss of snr but we got {loss_kind}"
+            )
+        channel_loss.append(loss)
+    return channel_loss

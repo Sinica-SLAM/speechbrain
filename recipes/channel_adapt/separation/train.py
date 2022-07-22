@@ -24,101 +24,154 @@ Authors
 import os
 import sys
 import torch
+import random
 import torch.nn.functional as F
 import torchaudio
 import speechbrain as sb
 import speechbrain.nnet.schedulers as schedulers
 from speechbrain.utils.distributed import run_on_main
 from torch.cuda.amp import autocast
+from torch.utils.tensorboard import SummaryWriter
 from hyperpyyaml import load_hyperpyyaml
 import numpy as np
 from tqdm import tqdm
 import csv
 import logging
 
-
 # Define training procedure
 class Separation(sb.Brain):
-    def compute_forward(self, mix, targets, stage, noise=None):
-        """Forward computations from the mixture to the separated signals."""
-
-        # Unpack lists and put tensors in the right device
-        mix, mix_lens = mix
-        mix, mix_lens = mix.to(self.device), mix_lens.to(self.device)
-
-        # Convert targets to tensor
-        targets = torch.cat(
-            [targets[i][0].unsqueeze(-1) for i in range(self.hparams.num_spks)],
-            dim=-1,
-        ).to(self.device)
-
-        # Add speech distortions
-        if stage == sb.Stage.TRAIN:
-            with torch.no_grad():
-                if self.hparams.use_speedperturb or self.hparams.use_rand_shift:
-                    mix, targets = self.add_speed_perturb(targets, mix_lens)
-
-                    mix = targets.sum(-1)
-
-                if self.hparams.use_wavedrop:
-                    mix = self.hparams.wavedrop(mix, mix_lens)
-
-                if self.hparams.limit_training_signal_len:
-                    mix, targets = self.cut_signals(mix, targets)
-
-        # Separation
-        mix_w = self.hparams.Encoder(mix)
-        est_mask = self.hparams.MaskNet(mix_w)
-        mix_w = torch.stack([mix_w] * self.hparams.num_spks)
-        sep_h = mix_w * est_mask
-
-        # Decoding
-        est_source = torch.cat(
-            [
-                self.hparams.Decoder(sep_h[i]).unsqueeze(-1)
-                for i in range(self.hparams.num_spks)
-            ],
-            dim=-1,
-        )
-
-        # T changed after conv1d in encoder, fix it here
-        T_origin = mix.size(1)
-        T_est = est_source.size(1)
-        if T_origin > T_est:
-            est_source = F.pad(est_source, (0, 0, 0, T_origin - T_est))
+    def __init__(self, 
+            modules=None,
+            opt_class=None,
+            hparams=None,
+            run_opts=None,
+            checkpointer=None,
+            writer=None,
+        ):
+        super().__init__(modules, opt_class, hparams, run_opts, checkpointer,)
+        
+        if writer is not None:
+            self.writer = SummaryWriter(writer)
         else:
-            est_source = est_source[:, :T_origin, :]
+            log_dir = os.path.join(hparams["output_folder"], 'log')
+            os.makedirs(log_dir, exist_ok=True)
+            self.writer = SummaryWriter(log_dir)
+            
+        self.channel_order = {'android': 0, 'condenser':1, 'ios':2, 'lavalier':3, 'XYH-6-X':4, 'XYH-6-Y':5}
+    
+    def compute_forward(self, channel_mix, channel_targets, stage, noise=None):
+        """Forward computations from the mixture to the separated signals."""
+        channel_est_source = []
+        new_channel_targets = []
+        for i in range(len(channel_mix)):
+            mix = channel_mix[i]
+            targets = channel_targets[i]
+            targ_channel = random.choice()
+            # Unpack lists and put tensors in the right device
+            mix, mix_lens = mix
+            mix, mix_lens = mix.to(self.device), mix_lens.to(self.device)
 
-        return est_source, targets
+            # Convert targets to tensor
+            targets = torch.cat(
+                [targets[i][0].unsqueeze(-1) for i in range(self.hparams.num_spks)],
+                dim=-1,
+            ).to(self.device)
+
+            # Add speech distortions
+            if stage == sb.Stage.TRAIN:
+                with torch.no_grad():
+                    if self.hparams.use_speedperturb or self.hparams.use_rand_shift:
+                        mix, targets = self.add_speed_perturb(targets, mix_lens)
+
+                        mix = targets.sum(-1)
+
+                    if self.hparams.use_wavedrop:
+                        mix = self.hparams.wavedrop(mix, mix_lens)
+
+                    if self.hparams.limit_training_signal_len:
+                        mix, targets = self.cut_signals(mix, targets)
+
+            # Separation
+            mix_w = self.hparams.Encoder(mix)
+            est_mask = self.hparams.MaskNet(mix_w)
+            mix_w = torch.stack([mix_w] * self.hparams.num_spks)
+            sep_h = mix_w * est_mask
+
+            # Decoding
+            est_source = torch.cat(
+                [
+                    self.hparams.Decoder(sep_h[i]).unsqueeze(-1)
+                    for i in range(self.hparams.num_spks)
+                ],
+                dim=-1,
+            )
+
+            # T changed after conv1d in encoder, fix it here
+            T_origin = mix.size(1)
+            T_est = est_source.size(1)
+            if T_origin > T_est:
+                est_source = F.pad(est_source, (0, 0, 0, T_origin - T_est))
+            else:
+                est_source = est_source[:, :T_origin, :]
+                
+            channel_est_source.append(est_source)
+            new_channel_targets.append(targets)
+
+        return channel_est_source, new_channel_targets
 
     def compute_objectives(self, predictions, targets):
         """Computes the sinr loss"""
-        return self.hparams.loss(targets, predictions)
+        return self.hparams.loss(targets, predictions, self.hparams.loss_kind)
 
     def fit_batch(self, batch):
         """Trains one batch"""
         # Unpacking batch list
-        mixture = batch.mix_sig
-        targets = [batch.s1_sig, batch.s2_sig]
+        mixtures = [
+            batch.android_mix_sig, 
+            batch.condenser_mix_sig, 
+            batch.ios_mix_sig,
+            batch.lavalier_mix_sig,
+            batch.XYH6X_mix_sig,
+            batch.XYH6Y_mix_sig,
+        ]
+        targets = [
+            [batch.android_s1_sig, batch.android_s2_sig],
+            [batch.condenser_s1_sig, batch.condenser_s2_sig],
+            [batch.ios_s1_sig, batch.ios_s2_sig],
+            [batch.lavalier_s1_sig, batch.lavalier_s2_sig],
+            [batch.XYH6X_s1_sig, batch.XYH6Y_s2_sig],
+            [batch.XYH6Y_s1_sig, batch.XYH6Y_s2_sig],
+        ]
 
         if self.hparams.num_spks == 3:
-            targets.append(batch.s3_sig)
+            targets[0].append(batch.android_s3_sig)
+            targets[1].append(batch.condenser_s3_sig)
+            targets[2].append(batch.ios_s3_sig)
+            targets[3].append(batch.lavalier_s3_sig)
+            targets[4].append(batch.XYH6X_s3_sig)
+            targets[5].append(batch.XYH6Y_s3_sig)
 
+        mixtures.pop(self.channel_order[self.hparams.test_channel])
+        targets.pop(self.channel_order[self.hparams.test_channel])
+        
         if self.hparams.auto_mix_prec:
             with autocast():
                 predictions, targets = self.compute_forward(
-                    mixture, targets, sb.Stage.TRAIN
+                    mixtures, targets, sb.Stage.TRAIN
                 )
                 loss = self.compute_objectives(predictions, targets)
 
-                # hard threshold the easy dataitems
-                if self.hparams.threshold_byloss:
-                    th = self.hparams.threshold
-                    loss_to_keep = loss[loss > th]
-                    if loss_to_keep.nelement() > 0:
-                        loss = loss_to_keep.mean()
-                else:
-                    loss = loss.mean()
+                for i in range(len(loss)):
+                    # hard threshold the easy dataitems
+                    if self.hparams.threshold_byloss:
+                        th = self.hparams.threshold
+                        loss_to_keep = loss[i][loss > th]
+                        if loss_to_keep.nelement() > 0:
+                            loss[i] = loss_to_keep.mean()
+                    else:
+                        loss[i] = loss[i].mean()
+                curve_loss = loss
+                loss = sum(loss) / len(loss)
 
             if (
                 loss < self.hparams.loss_upper_lim and loss.nelement() > 0
@@ -141,17 +194,21 @@ class Separation(sb.Brain):
                 loss.data = torch.tensor(0).to(self.device)
         else:
             predictions, targets = self.compute_forward(
-                mixture, targets, sb.Stage.TRAIN
+                mixtures, targets, sb.Stage.TRAIN
             )
             loss = self.compute_objectives(predictions, targets)
 
-            if self.hparams.threshold_byloss:
-                th = self.hparams.threshold
-                loss_to_keep = loss[loss > th]
-                if loss_to_keep.nelement() > 0:
-                    loss = loss_to_keep.mean()
-            else:
-                loss = loss.mean()
+            for i in range(len(loss)):
+                # hard threshold the easy dataitems
+                if self.hparams.threshold_byloss:
+                    th = self.hparams.threshold
+                    loss_to_keep = loss[i][loss > th]
+                    if loss_to_keep.nelement() > 0:
+                        loss[i] = loss_to_keep.mean()
+                else:
+                    loss[i] = loss[i].mean()
+            curve_loss = loss
+            loss = sum(loss) / len(loss)
 
             if (
                 loss < self.hparams.loss_upper_lim and loss.nelement() > 0
@@ -172,28 +229,57 @@ class Separation(sb.Brain):
                 loss.data = torch.tensor(0).to(self.device)
         self.optimizer.zero_grad()
 
+        for i in range(len(curve_loss)):
+            curve_loss[i] = curve_loss[i].detach().cpu()
+            
         return loss.detach().cpu()
 
     def evaluate_batch(self, batch, stage):
         """Computations needed for validation/test batches"""
         snt_id = batch.id
-        mixture = batch.mix_sig
-        targets = [batch.s1_sig, batch.s2_sig]
+        mixtures = [
+            batch.android_mix_sig, 
+            batch.condenser_mix_sig, 
+            batch.ios_mix_sig,
+            batch.lavalier_mix_sig,
+            batch.XYH6X_mix_sig,
+            batch.XYH6Y_mix_sig,
+        ]
+        targets = [
+            [batch.android_s1_sig, batch.android_s2_sig],
+            [batch.condenser_s1_sig, batch.condenser_s2_sig],
+            [batch.ios_s1_sig, batch.ios_s2_sig],
+            [batch.lavalier_s1_sig, batch.lavalier_s2_sig],
+            [batch.XYH6X_s1_sig, batch.XYH6Y_s2_sig],
+            [batch.XYH6Y_s1_sig, batch.XYH6Y_s2_sig],
+        ]
+
         if self.hparams.num_spks == 3:
-            targets.append(batch.s3_sig)
+            targets[0].append(batch.android_s3_sig)
+            targets[1].append(batch.condenser_s3_sig)
+            targets[2].append(batch.ios_s3_sig)
+            targets[3].append(batch.lavalier_s3_sig)
+            targets[4].append(batch.XYH6X_s3_sig)
+            targets[5].append(batch.XYH6Y_s3_sig)
 
         with torch.no_grad():
-            predictions, targets = self.compute_forward(mixture, targets, stage)
+            predictions, targets = self.compute_forward(mixtures, targets, stage)
             loss = self.compute_objectives(predictions, targets)
+            loss.pop(self.channel_order[self.hparams.test_channel])
+            for i in range(len(loss)):
+                loss[i] = loss.mean()
 
         # Manage audio file saving
         if stage == sb.Stage.TEST and self.hparams.save_audio:
+            mixtures = mixtures[self.channel_order[self.hparams.test_channel]]
+            targets = targets[self.channel_order[self.hparams.test_channel]]
+            predictions = predictions[self.channel_order[self.hparams.test_channel]]
             if hasattr(self.hparams, "n_audio_to_save"):
                 if self.hparams.n_audio_to_save > 0:
-                    self.save_audio(snt_id[0], mixture, targets, predictions)
+                    self.save_audio(snt_id[0], mixtures, targets, predictions, self.hparams.test_channel)
                     self.hparams.n_audio_to_save += -1
             else:
-                self.save_audio(snt_id[0], mixture, targets, predictions)
+                self.save_audio(snt_id[0], mixtures, targets, predictions, self.hparams.test_channel)
 
         return loss.detach()
 
@@ -325,7 +411,7 @@ class Separation(sb.Brain):
         csv_columns = ["snt_id", "sdr", "sdr_i", "si-snr", "si-snr_i"]
 
         test_loader = sb.dataio.dataloader.make_dataloader(
-            test_data, **self.hparams.dataloader_opts
+            test_data, **self.hparams.testloader_opts
         )
 
         with open(save_file, "w") as results_csv:
@@ -337,15 +423,39 @@ class Separation(sb.Brain):
                 for i, batch in enumerate(t):
 
                     # Apply Separation
-                    mixture, mix_len = batch.mix_sig
-                    snt_id = batch.id
-                    targets = [batch.s1_sig, batch.s2_sig]
+                    mixtures = [
+                        batch.android_mix_sig, 
+                        batch.condenser_mix_sig, 
+                        batch.ios_mix_sig,
+                        batch.lavalier_mix_sig,
+                        batch.XYH6X_mix_sig,
+                        batch.XYH6Y_mix_sig,
+                    ]
+                    targets = [
+                        [batch.android_s1_sig, batch.android_s2_sig],
+                        [batch.condenser_s1_sig, batch.condenser_s2_sig],
+                        [batch.ios_s1_sig, batch.ios_s2_sig],
+                        [batch.lavalier_s1_sig, batch.lavalier_s2_sig],
+                        [batch.XYH6X_s1_sig, batch.XYH6Y_s2_sig],
+                        [batch.XYH6Y_s1_sig, batch.XYH6Y_s2_sig],
+                    ]
+
                     if self.hparams.num_spks == 3:
-                        targets.append(batch.s3_sig)
+                        targets[0].append(batch.android_s3_sig)
+                        targets[1].append(batch.condenser_s3_sig)
+                        targets[2].append(batch.ios_s3_sig)
+                        targets[3].append(batch.lavalier_s3_sig)
+                        targets[4].append(batch.XYH6X_s3_sig)
+                        targets[5].append(batch.XYH6Y_s3_sig)
+            
+                    mix_sig = mixtures[self.channel_order[self.hparams.test_channel]]
+                    mixture, mix_len = mix_sig
+                    snt_id = batch.id
+                    targets = targets[self.channel_order[self.hparams.test_channel]]
 
                     with torch.no_grad():
                         predictions, targets = self.compute_forward(
-                            batch.mix_sig, targets, sb.Stage.TEST
+                            mix_sig, [targets], sb.Stage.TEST
                         )
 
                     # Compute SI-SNR
@@ -355,9 +465,9 @@ class Separation(sb.Brain):
                     mixture_signal = torch.stack(
                         [mixture] * self.hparams.num_spks, dim=-1
                     )
-                    mixture_signal = mixture_signal.to(targets.device)
+                    mixture_signal = mixture_signal.to(mixture.device)
                     sisnr_baseline = self.compute_objectives(
-                        mixture_signal, targets
+                        [mixture_signal], targets
                     )
                     sisnr_i = sisnr - sisnr_baseline
 
@@ -404,7 +514,7 @@ class Separation(sb.Brain):
         logger.info("Mean SDR is {}".format(np.array(all_sdrs).mean()))
         logger.info("Mean SDRi is {}".format(np.array(all_sdrs_i).mean()))
 
-    def save_audio(self, snt_id, mixture, targets, predictions):
+    def save_audio(self, snt_id, mixture, targets, predictions, test_channel):
         "saves the test audio (mixture, targets, and estimated sources) on disk"
 
         # Create outout folder
@@ -418,7 +528,7 @@ class Separation(sb.Brain):
             signal = predictions[0, :, ns]
             signal = signal / signal.abs().max()
             save_file = os.path.join(
-                save_path, "item{}_source{}hat.wav".format(snt_id, ns + 1)
+                save_path, "item{}_{}_source{}hat.wav".format(snt_id, test_channel, ns + 1)
             )
             torchaudio.save(
                 save_file, signal.unsqueeze(0).cpu(), self.hparams.sample_rate
@@ -428,7 +538,7 @@ class Separation(sb.Brain):
             signal = targets[0, :, ns]
             signal = signal / signal.abs().max()
             save_file = os.path.join(
-                save_path, "item{}_source{}.wav".format(snt_id, ns + 1)
+                save_path, "item{}_{}_source{}.wav".format(snt_id, test_channel, ns + 1)
             )
             torchaudio.save(
                 save_file, signal.unsqueeze(0).cpu(), self.hparams.sample_rate
@@ -437,7 +547,7 @@ class Separation(sb.Brain):
         # Mixture
         signal = mixture[0][0, :]
         signal = signal / signal.abs().max()
-        save_file = os.path.join(save_path, "item{}_mix.wav".format(snt_id))
+        save_file = os.path.join(save_path, "item{}_{}_mix.wav".format(snt_id, test_channel))
         torchaudio.save(
             save_file, signal.unsqueeze(0).cpu(), self.hparams.sample_rate
         )
@@ -466,43 +576,231 @@ def dataio_prep(hparams):
 
     # 2. Provide audio pipelines
 
-    @sb.utils.data_pipeline.takes("mix_wav")
-    @sb.utils.data_pipeline.provides("mix_sig")
-    def audio_pipeline_mix(mix_wav):
-        mix_sig = sb.dataio.dataio.read_audio(mix_wav)
-        return mix_sig
+    @sb.utils.data_pipeline.takes("android_mix_wav")
+    @sb.utils.data_pipeline.provides("android_mix_sig")
+    def audio_pipeline_android_mix(android_mix_wav):
+        android_mix_sig = sb.dataio.dataio.read_audio(android_mix_wav)
+        return android_mix_sig
 
-    @sb.utils.data_pipeline.takes("s1_wav")
-    @sb.utils.data_pipeline.provides("s1_sig")
-    def audio_pipeline_s1(s1_wav):
-        s1_sig = sb.dataio.dataio.read_audio(s1_wav)
-        return s1_sig
+    @sb.utils.data_pipeline.takes("android_s1_wav")
+    @sb.utils.data_pipeline.provides("android_s1_sig")
+    def audio_pipeline_android_s1(android_s1_wav):
+        android_s1_sig = sb.dataio.dataio.read_audio(android_s1_wav)
+        return android_s1_sig
 
-    @sb.utils.data_pipeline.takes("s2_wav")
-    @sb.utils.data_pipeline.provides("s2_sig")
-    def audio_pipeline_s2(s2_wav):
-        s2_sig = sb.dataio.dataio.read_audio(s2_wav)
-        return s2_sig
+    @sb.utils.data_pipeline.takes("android_s2_wav")
+    @sb.utils.data_pipeline.provides("android_s2_sig")
+    def audio_pipeline_android_s2(android_s2_wav):
+        android_s2_sig = sb.dataio.dataio.read_audio(android_s2_wav)
+        return android_s2_sig
+    
+    @sb.utils.data_pipeline.takes("condenser_mix_wav")
+    @sb.utils.data_pipeline.provides("condenser_mix_sig")
+    def audio_pipeline_condenser_mix(condenser_mix_wav):
+        condenser_mix_sig = sb.dataio.dataio.read_audio(condenser_mix_wav)
+        return condenser_mix_sig
+
+    @sb.utils.data_pipeline.takes("condenser_s1_wav")
+    @sb.utils.data_pipeline.provides("condenser_s1_sig")
+    def audio_pipeline_condenser_s1(condenser_s1_wav):
+        condenser_s1_sig = sb.dataio.dataio.read_audio(condenser_s1_wav)
+        return condenser_s1_sig
+
+    @sb.utils.data_pipeline.takes("condenser_s2_wav")
+    @sb.utils.data_pipeline.provides("condenser_s2_sig")
+    def audio_pipeline_condenser_s2(condenser_s2_wav):
+        condenser_s2_sig = sb.dataio.dataio.read_audio(condenser_s2_wav)
+        return condenser_s2_sig
+    
+    @sb.utils.data_pipeline.takes("ios_mix_wav")
+    @sb.utils.data_pipeline.provides("ios_mix_sig")
+    def audio_pipeline_ios_mix(ios_mix_wav):
+        ios_mix_sig = sb.dataio.dataio.read_audio(ios_mix_wav)
+        return ios_mix_sig
+
+    @sb.utils.data_pipeline.takes("ios_s1_wav")
+    @sb.utils.data_pipeline.provides("ios_s1_sig")
+    def audio_pipeline_ios_s1(ios_s1_wav):
+        ios_s1_sig = sb.dataio.dataio.read_audio(ios_s1_wav)
+        return ios_s1_sig
+
+    @sb.utils.data_pipeline.takes("ios_s2_wav")
+    @sb.utils.data_pipeline.provides("ios_s2_sig")
+    def audio_pipeline_ios_s2(ios_s2_wav):
+        ios_s2_sig = sb.dataio.dataio.read_audio(ios_s2_wav)
+        return ios_s2_sig
+    
+    @sb.utils.data_pipeline.takes("lavalier_mix_wav")
+    @sb.utils.data_pipeline.provides("lavalier_mix_sig")
+    def audio_pipeline_lavalier_mix(lavalier_mix_wav):
+        lavalier_mix_sig = sb.dataio.dataio.read_audio(lavalier_mix_wav)
+        return lavalier_mix_sig
+
+    @sb.utils.data_pipeline.takes("lavalier_s1_wav")
+    @sb.utils.data_pipeline.provides("lavalier_s1_sig")
+    def audio_pipeline_lavalier_s1(lavalier_s1_wav):
+        lavalier_s1_sig = sb.dataio.dataio.read_audio(lavalier_s1_wav)
+        return lavalier_s1_sig
+
+    @sb.utils.data_pipeline.takes("lavalier_s2_wav")
+    @sb.utils.data_pipeline.provides("lavalier_s2_sig")
+    def audio_pipeline_lavalier_s2(lavalier_s2_wav):
+        lavalier_s2_sig = sb.dataio.dataio.read_audio(lavalier_s2_wav)
+        return lavalier_s2_sig
+    
+    @sb.utils.data_pipeline.takes("XYH6X_mix_wav")
+    @sb.utils.data_pipeline.provides("XYH6X_mix_sig")
+    def audio_pipeline_XYH6X_mix(XYH6X_mix_wav):
+        XYH6X_mix_sig = sb.dataio.dataio.read_audio(XYH6X_mix_wav)
+        return XYH6X_mix_sig
+
+    @sb.utils.data_pipeline.takes("XYH6X_s1_wav")
+    @sb.utils.data_pipeline.provides("XYH6X_s1_sig")
+    def audio_pipeline_XYH6X_s1(XYH6X_s1_wav):
+        XYH6X_s1_sig = sb.dataio.dataio.read_audio(XYH6X_s1_wav)
+        return XYH6X_s1_sig
+
+    @sb.utils.data_pipeline.takes("XYH6X_s2_wav")
+    @sb.utils.data_pipeline.provides("XYH6X_s2_sig")
+    def audio_pipeline_XYH6X_s2(XYH6X_s2_wav):
+        XYH6X_s2_sig = sb.dataio.dataio.read_audio(XYH6X_s2_wav)
+        return XYH6X_s2_sig
+    
+    @sb.utils.data_pipeline.takes("XYH6Y_mix_wav")
+    @sb.utils.data_pipeline.provides("XYH6Y_mix_sig")
+    def audio_pipeline_XYH6Y_mix(XYH6Y_mix_wav):
+        XYH6Y_mix_sig = sb.dataio.dataio.read_audio(XYH6Y_mix_wav)
+        return XYH6Y_mix_sig
+
+    @sb.utils.data_pipeline.takes("XYH6Y_s1_wav")
+    @sb.utils.data_pipeline.provides("XYH6Y_s1_sig")
+    def audio_pipeline_XYH6Y_s1(XYH6Y_s1_wav):
+        XYH6Y_s1_sig = sb.dataio.dataio.read_audio(XYH6Y_s1_wav)
+        return XYH6Y_s1_sig
+
+    @sb.utils.data_pipeline.takes("XYH6Y_s2_wav")
+    @sb.utils.data_pipeline.provides("XYH6Y_s2_sig")
+    def audio_pipeline_XYH6Y_s2(XYH6Y_s2_wav):
+        XYH6Y_s2_sig = sb.dataio.dataio.read_audio(XYH6Y_s2_wav)
+        return XYH6Y_s2_sig
 
     if hparams["num_spks"] == 3:
 
-        @sb.utils.data_pipeline.takes("s3_wav")
-        @sb.utils.data_pipeline.provides("s3_sig")
-        def audio_pipeline_s3(s3_wav):
-            s3_sig = sb.dataio.dataio.read_audio(s3_wav)
-            return s3_sig
+        @sb.utils.data_pipeline.takes("android_s3_wav")
+        @sb.utils.data_pipeline.provides("android_s3_sig")
+        def audio_pipeline_android_s3(android_s3_wav):
+            android_s3_sig = sb.dataio.dataio.read_audio(android_s3_wav)
+            return android_s3_sig
+        
+        @sb.utils.data_pipeline.takes("condenser_s3_wav")
+        @sb.utils.data_pipeline.provides("condenser_s3_sig")
+        def audio_pipeline_condenser_s3(condenser_s3_wav):
+            condenser_s3_sig = sb.dataio.dataio.read_audio(condenser_s3_wav)
+            return condenser_s3_sig
+        
+        @sb.utils.data_pipeline.takes("ios_s3_wav")
+        @sb.utils.data_pipeline.provides("ios_s3_sig")
+        def audio_pipeline_ios_s3(ios_s3_wav):
+            ios_s3_sig = sb.dataio.dataio.read_audio(ios_s3_wav)
+            return ios_s3_sig
+        
+        @sb.utils.data_pipeline.takes("lavalier_s3_wav")
+        @sb.utils.data_pipeline.provides("lavalier_s3_sig")
+        def audio_pipeline_lavalier_s3(lavalier_s3_wav):
+            lavalier_s3_sig = sb.dataio.dataio.read_audio(lavalier_s3_wav)
+            return lavalier_s3_sig
+        
+        @sb.utils.data_pipeline.takes("XYH6X_s3_wav")
+        @sb.utils.data_pipeline.provides("XYH6X_s3_sig")
+        def audio_pipeline_XYH6X_s3(XYH6X_s3_wav):
+            XYH6X_s3_sig = sb.dataio.dataio.read_audio(XYH6X_s3_wav)
+            return XYH6X_s3_sig
+        
+        @sb.utils.data_pipeline.takes("XYH6Y_s3_wav")
+        @sb.utils.data_pipeline.provides("XYH6Y_s3_sig")
+        def audio_pipeline_XYH6Y_s3(XYH6Y_s3_wav):
+            XYH6Y_s3_sig = sb.dataio.dataio.read_audio(XYH6Y_s3_wav)
+            return XYH6Y_s3_sig
 
-    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_mix)
-    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s1)
-    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s2)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_android_mix)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_android_s1)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_android_s2)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_condenser_mix)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_condenser_s1)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_condenser_s2)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_ios_mix)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_ios_s1)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_ios_s2)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_lavalier_mix)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_lavalier_s1)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_lavalier_s2)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_XYH6X_mix)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_XYH6X_s1)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_XYH6X_s2)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_XYH6Y_mix)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_XYH6Y_s1)
+    sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_XYH6Y_s2)
     if hparams["num_spks"] == 3:
-        sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_s3)
+        sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_android_s3)
+        sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_condenser_s3)
+        sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_ios_s3)
+        sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_lavalier_s3)
+        sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_XYH6X_s3)
+        sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline_XYH6Y_s3)
         sb.dataio.dataset.set_output_keys(
-            datasets, ["id", "mix_sig", "s1_sig", "s2_sig", "s3_sig"]
+            datasets, 
+            [
+                "id", 
+                "android_mix_sig", 
+                "android_s1_sig", 
+                "android_s2_sig", 
+                "android_s3_sig",
+                "condenser_mix_sig", 
+                "condenser_s1_sig", 
+                "condenser_s2_sig", 
+                "condenser_s3_sig",
+                "ios_mix_sig", 
+                "ios_s1_sig", 
+                "ios_s2_sig", 
+                "ios_s3_sig",
+                "lavalier_mix_sig", 
+                "lavalier_s1_sig", 
+                "lavalier_s2_sig", 
+                "lavalier_s3_sig",
+                "XYH6X_mix_sig", 
+                "XYH6X_s1_sig", 
+                "XYH6X_s2_sig", 
+                "XYH6X_s3_sig",
+                "XYH6Y_mix_sig", 
+                "XYH6Y_s1_sig", 
+                "XYH6Y_s2_sig", 
+                "XYH6Y_s3_sig",
+            ]
         )
     else:
         sb.dataio.dataset.set_output_keys(
-            datasets, ["id", "mix_sig", "s1_sig", "s2_sig"]
+            datasets, 
+            [
+                "id", 
+                "android_mix_sig", 
+                "android_s1_sig", 
+                "android_s2_sig", 
+                "condenser_mix_sig", 
+                "condenser_s1_sig", 
+                "condenser_s2_sig", 
+                "ios_mix_sig", 
+                "ios_s1_sig", 
+                "ios_s2_sig", 
+                "lavalier_mix_sig", 
+                "lavalier_s1_sig", 
+                "lavalier_s2_sig", 
+                "XYH6X_mix_sig", 
+                "XYH6X_s1_sig", 
+                "XYH6X_s2_sig", 
+                "XYH6Y_mix_sig", 
+                "XYH6Y_s1_sig", 
+                "XYH6Y_s2_sig", 
+            ]
         )
 
     return train_data, valid_data, test_data
@@ -521,6 +819,9 @@ if __name__ == "__main__":
 
     # Logger info
     logger = logging.getLogger(__name__)
+    
+    # random seed
+    random.seed(hparams['seed'])
 
     # Create experiment directory
     sb.create_experiment_directory(

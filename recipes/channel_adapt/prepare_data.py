@@ -6,6 +6,7 @@ Author
 
  """
 
+from calendar import c
 import os
 import csv
 
@@ -47,6 +48,8 @@ def prepare_wsjmix(
             create_wsj_csv_3spks(datapath, savepath)
         else:
             raise ValueError("Unsupported Number of Speakers")
+    elif "tat" in datapath or "TAT" in datapath:
+        create_tat_csv(datapath, savepath)
     else:
         print("Creating a csv file for a custom dataset")
         create_custom_dataset(datapath, savepath)
@@ -236,5 +239,99 @@ def create_wsj_csv_3spks(datapath, savepath):
                     "s3_wav": s3_path,
                     "s3_wav_format": "wav",
                     "s3_wav_opts": None,
+                }
+                writer.writerow(row)
+
+
+def create_tat_csv(datapath, savepath):
+    """
+    This function creates the csv files to get the speechbrain data loaders for the wsj0-2mix dataset.
+
+    Arguments:
+        datapath (str) : path for the wsj0-mix dataset.
+        savepath (str) : path where we save the csv file
+    """
+    for set_type in ["tr", "cv", "tt"]:
+        mix_channel_fl_paths = {}
+        s1_channel_fl_paths = {}
+        s2_channel_fl_paths = {}
+        for channel_type in ["android", 'condenser', 'ios', 'lavalier', 'XYH-6-X', 'XYH-6-Y']:
+            
+            mix_path = os.path.join(datapath, f"wav8k_{channel_type}/min/" + set_type + "/mix_100/")
+            s1_path = os.path.join(datapath, f"wav8k_{channel_type}/min/" + set_type + "/s1/")
+            s2_path = os.path.join(datapath, f"wav8k_{channel_type}/min/" + set_type + "/s2/")
+
+            files = os.listdir(mix_path)
+
+            mix_fl_paths = [mix_path + fl for fl in files]
+            s1_fl_paths = [s1_path + fl for fl in files]
+            s2_fl_paths = [s2_path + fl for fl in files]
+            mix_channel_fl_paths[channel_type] = mix_fl_paths
+            s1_channel_fl_paths[channel_type] = s1_fl_paths
+            s2_channel_fl_paths[channel_type] = s2_fl_paths
+
+        csv_columns = [
+            "ID",
+            "duration",
+            "android_mix_wav",
+            "android_s1_wav",
+            "android_s2_wav",
+            "condenser_mix_wav",
+            "condenser_s1_wav",
+            "condenser_s2_wav",
+            "ios_mix_wav",
+            "ios_s1_wav",
+            "ios_s2_wav",
+            "lavalier_mix_wav",
+            "lavalier_s1_wav",
+            "lavalier_s2_wav",
+            "XYH6X_mix_wav",
+            "XYH6X_s1_wav",
+            "XYH6X_s2_wav",
+            "XYH6Y_mix_wav",
+            "XYH6Y_s1_wav",
+            "XYH6Y_s2_wav",
+        ]
+
+        with open(savepath + "/tat_" + set_type + ".csv", "w") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
+            writer.writeheader()
+            for i, (mix_android_path, s1_android_path, s2_android_path, 
+                    mix_condenser_path, s1_condenser_path, s2_condenser_path,
+                    mix_ios_path, s1_ios_path, s2_ios_path,
+                    mix_lavalier_path, s1_lavalier_path, s2_lavalier_path, 
+                    mix_XYH6X_path, s1_XYH6X_path, s2_XYH6X_path,
+                    mix_XYH6Y_path, s1_XYH6Y_path, s2_XYH6Y_path
+                    ) in enumerate(
+                        zip(mix_channel_fl_paths['android'], s1_channel_fl_paths['android'], s2_channel_fl_paths['android'],
+                            mix_channel_fl_paths['condenser'], s1_channel_fl_paths['condenser'], s2_channel_fl_paths['condenser'],
+                            mix_channel_fl_paths['ios'], s1_channel_fl_paths['ios'], s2_channel_fl_paths['ios'],
+                            mix_channel_fl_paths['lavalier'], s1_channel_fl_paths['lavalier'], s2_channel_fl_paths['lavalier'],
+                            mix_channel_fl_paths['XYH-6-X'], s1_channel_fl_paths['XYH-6-X'], s2_channel_fl_paths['XYH-6-X'],
+                            mix_channel_fl_paths['XYH-6-Y'], s1_channel_fl_paths['XYH-6-Y'], s2_channel_fl_paths['XYH-6-Y'],
+                        )
+            ):
+
+                row = {
+                    "ID": i,
+                    "duration": 1.0,
+                    "android_mix_wav": mix_android_path,
+                    "android_s1_wav": s1_android_path,
+                    "android_s2_wav":s2_android_path,
+                    "condenser_mix_wav": mix_condenser_path,
+                    "condenser_s1_wav": s1_condenser_path,
+                    "condenser_s2_wav": s2_condenser_path,
+                    "ios_mix_wav": mix_ios_path,
+                    "ios_s1_wav": s1_ios_path,
+                    "ios_s2_wav": s2_ios_path,
+                    "lavalier_mix_wav": mix_lavalier_path,
+                    "lavalier_s1_wav": s1_lavalier_path,
+                    "lavalier_s2_wav": s2_lavalier_path,
+                    "XYH6X_mix_wav": mix_XYH6X_path,
+                    "XYH6X_s1_wav": s1_XYH6X_path,
+                    "XYH6X_s2_wav": s2_XYH6X_path,
+                    "XYH6Y_mix_wav": mix_XYH6Y_path,
+                    "XYH6Y_s1_wav": s1_XYH6Y_path,
+                    "XYH6Y_s2_wav": s2_XYH6Y_path,
                 }
                 writer.writerow(row)
