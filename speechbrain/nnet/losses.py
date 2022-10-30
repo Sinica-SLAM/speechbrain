@@ -1159,16 +1159,53 @@ def dpfn_loss(
         return si_snr
 
 
-def channel_adapt_loss(targets, predictions, loss_kind):
+def channel_adapt_loss(targets, predictions, ori_targets, pred_mixes, mixes, chan_preds, chan_ids, loss_kind, channel_adapt):
     channel_loss = []
+    ori_channel_loss = []
+    mix_loss = []
+    channel_id_loss = []
     for i in range(len(targets)):
         target = targets[i]
+        ori_target = ori_targets[i]
         prediction = predictions[i]
-        if loss_kind == "snr":
-            loss = get_si_snr_with_pitwrapper(target, prediction)
-        else:
-            raise NotImplementedError(
-                f"We only implemented channel adapt loss of snr but we got {loss_kind}"
-            )
+        pred_mix = pred_mixes[i]
+        mix = mixes[i]
+        loss = get_si_snr_with_pitwrapper(target, prediction)
         channel_loss.append(loss)
-    return channel_loss
+        ori_loss = get_si_snr_with_pitwrapper(ori_target, prediction)
+        ori_channel_loss.append(ori_loss)
+        
+        if channel_adapt:
+            if loss_kind == 'snr':
+                _loss = cal_si_snr(mix.transpose(0,1).unsqueeze(-1), pred_mix.transpose(0,1).unsqueeze(-1))
+                _loss = _loss.squeeze(0).squeeze(-1)
+            else:
+                raise NotImplementedError(
+                    f"We only implemented channel adapt loss of snr but we got {loss_kind}"
+                )
+            
+            chan_criterion = nn.CrossEntropyLoss(reduction="none")
+            chan_id_loss = chan_criterion(chan_preds[i], chan_ids[i])
+        else:
+            _loss = torch.zeros_like(loss).to(loss.device)
+            chan_id_loss = torch.zeros_like(loss).to(loss.device)
+        mix_loss.append(_loss)
+        channel_id_loss.append(chan_id_loss)
+        
+    return channel_loss, mix_loss, ori_channel_loss, channel_id_loss
+
+def embedding_loss(embeddings):
+    embed_loss = torch.nn.TripletMarginLoss(margin=1.0, p=2)
+    batch = embeddings[0].shape[0]
+    losses = torch.zeros(batch).to(embeddings[0].device)
+    for i in range(len(embeddings)):
+        loss = 0.0
+        for j in range(len(embeddings)):
+            if i != j:
+                batch_index = torch.randperm(batch)
+                _loss = embed_loss(embeddings[i], embeddings[i][batch_index], embeddings[j])
+                loss += _loss
+        loss /= (len(embeddings) - 1)
+        losses += loss
+    losses /= len(embeddings)
+    return losses
