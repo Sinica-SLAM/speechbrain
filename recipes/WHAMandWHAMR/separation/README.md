@@ -52,6 +52,9 @@ Here are the SI - SNRi results (in dB) on the test set of WHAM!, WHAMR! datasets
 # Training time
 It takes about 2h 30 min for WHAMR! (DynamicMixing) and WHAM! on a NVIDIA V100 (32GB).
 
+The output folder with the logs for WHAMR! can be found [here](https://drive.google.com/drive/folders/1m1xfx2ojf7qgOyscJVVCQFRY0VRl0rdi?usp=sharing).
+The output folder with the logs for WHAM! can be found [here](https://drive.google.com/drive/folders/1dIAT8hZxvdJPZNUb8Zkk3BuN7GZ9-mZb?usp=sharing).
+
 
 # Pretrained Models:
 Pretrained models for SepFormer on WHAM!, WHAMR! datasets can be found through huggingface:
@@ -61,6 +64,7 @@ Pretrained models for SepFormer on WHAM!, WHAMR! datasets can be found through h
 * Pretrained models with the training logs can be found on `https://drive.google.com/drive/u/0/folders/1ZVuROxR711Xib2MsJbcPla4PWqbK1Ddw` also.
 
 You can find the pre-trained model with an easy-inference function on [HuggingFace](https://huggingface.co/speechbrain/sepformer-whamr).
+The 16kHz version of the sepformer can be found [here](https://huggingface.co/speechbrain/sepformer-whamr16k).
 
 # Example calls for running the training scripts
 
@@ -71,6 +75,17 @@ You can find the pre-trained model with an easy-inference function on [HuggingFa
 * WHAMR! dataset without dynamic mixing: `python train.py hparams/sepformer-whamr.yaml --data_folder yourpath/whamr  --rir_path yourpath/rir_wavs`
 
 * WHAM! dataset without dynamic mixing: `python train.py hparams/sepformer-wham.yaml --data_folder yourpath/wham_original`
+
+
+# Multi-GPU training
+
+You can run the following command to train the model using Distributed Data Parallel (DDP) with 2 GPUs:
+
+```
+ python -m torch.distributed.launch --nproc_per_node=2 train.py hparams/sepformer-whamr.yaml --data_folder /yourdatapath --distributed_launch --distributed_backend='nccl'
+```
+You can add the other runtime options as appropriate. For more complete information on multi-GPU usage, take a look at this [tutorial](https://colab.research.google.com/drive/13pBUacPiotw1IvyffvGZ-HrtBr9T6l15?usp=sharing).
+
 
 # **About SpeechBrain**
 - Website: https://speechbrain.github.io/

@@ -44,7 +44,14 @@ Any modification made to the `speechbrain` package will be automatically interpr
 Please, run the following script  from the main folder to make sure your installation is working:
 ```
 pytest tests
-pytest --doctest-modules speechbrain
+```
+
+If you have a GPU, you can run the tests with `pytest tests --device='cuda'`
+
+You can run doctests with:
+
+```
+tests/.run-doctests.sh
 ```
 
 ## Operating Systems
@@ -56,7 +63,7 @@ in this [GitHub issue](https://github.com/speechbrain/speechbrain/issues/512).
 
 A good practice is to have different python environments for your different tools
 and toolkits, so they do not interfere with each other. This can be done either with
-[Anaconda](https://en.wikipedia.org/wiki/Anaconda_(Python_distribution)) or [venv](https://docs.python.org/3.8/library/venv.html).
+[Anaconda](https://www.anaconda.com/products/distribution) or [venv](https://docs.python.org/3.8/library/venv.html).
 
 Anaconda can be installed by simply following [this tutorial](https://docs.anaconda.com/anaconda/install/linux/). In practice, it is a matter of downloading the installation script and executing it.
 
@@ -65,7 +72,7 @@ Anaconda can be installed by simply following [this tutorial](https://docs.anaco
 Once Anaconda is installed, you can create a new environment with:
 
 ```
-conda create --name speechbrain python=3.8
+conda create --name speechbrain python=3.9
 ```
 
 Then, activate it with:

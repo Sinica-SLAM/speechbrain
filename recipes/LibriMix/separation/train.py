@@ -120,7 +120,7 @@ class Separation(sb.Brain):
         if self.hparams.num_spks == 3:
             targets.append(batch.s3_sig)
 
-        if self.hparams.auto_mix_prec:
+        if self.auto_mix_prec:
             with autocast():
                 predictions, targets = self.compute_forward(
                     mixture, targets, sb.Stage.TRAIN, noise
@@ -553,7 +553,6 @@ if __name__ == "__main__":
     hparams_file, run_opts, overrides = sb.parse_arguments(sys.argv[1:])
     with open(hparams_file) as fin:
         hparams = load_hyperpyyaml(fin, overrides)
-    run_opts["auto_mix_prec"] = hparams["auto_mix_prec"]
 
     # Initialize ddp (useful only for multi-GPU DDP training)
     sb.utils.distributed.ddp_init_group(run_opts)
@@ -633,7 +632,17 @@ if __name__ == "__main__":
                     os.path.normpath(hparams["base_folder_dm"]) + "_processed"
                 )
 
-        train_data = dynamic_mix_data_prep(hparams)
+        dm_hparams = {
+            "train_data": hparams["train_data"],
+            "data_folder": hparams["data_folder"],
+            "base_folder_dm": hparams["base_folder_dm"],
+            "sample_rate": hparams["sample_rate"],
+            "num_spks": hparams["num_spks"],
+            "training_signal_len": hparams["training_signal_len"],
+            "dataloader_opts": hparams["dataloader_opts"],
+        }
+
+        train_data = dynamic_mix_data_prep(dm_hparams)
         _, valid_data, test_data = dataio_prep(hparams)
     else:
         train_data, valid_data, test_data = dataio_prep(hparams)
